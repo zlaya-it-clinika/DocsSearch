@@ -1,5 +1,7 @@
 # Только веб. Ядро и PostgreSQL поднимаются своим compose в source/core.
 # Запуск: cp .env.example .env, поправить CORE_API_URL, затем docker compose up -d --build
+name: docssearch-web
+
 services:
   web:
     build: .
