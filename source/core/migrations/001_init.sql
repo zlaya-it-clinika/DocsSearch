@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 CREATE TABLE IF NOT EXISTS sessions (
 	session_id text PRIMARY KEY,
 	owner_user_id text NOT NULL REFERENCES users (user_id),
-	template_step int NOT NULL DEFAULT 0
+	template_step int NOT NULL DEFAULT 0,
+	title text NOT NULL DEFAULT '',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS session_messages (
@@ -70,3 +73,7 @@ INSERT INTO id_counters (name, value) VALUES
 	('session', 1),
 	('audit', 1)
 ON CONFLICT (name) DO NOTHING;
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();

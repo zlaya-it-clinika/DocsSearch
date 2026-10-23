@@ -8,6 +8,9 @@ const (
 	KindTemplateReady = "template_ready"
 	KindAccessDenied  = "access_denied"
 
+	RoleAdmin = "admin"
+	RoleUser  = "user"
+
 	ErrorInvalidCredentials = "invalid_credentials"
 	ErrorUnauthorized       = "unauthorized"
 	ErrorAccessDenied       = "access_denied"
@@ -127,6 +130,16 @@ const (
 	TemplateFieldText  = "Укажите адресата."
 	TemplateReadyText  = "Черновик собран."
 	TemplateDraftText  = "Текст черновика."
+
+	LiveAnswerPrompt   = "Отвечай только по переданным фрагментам инструкций. Не добавляй факты, которых в них нет. Коротко, по-русски."
+	LiveClarifyPrompt  = "Вопрос подходит к разным документам. Задай один короткий уточняющий вопрос, о каком документе речь. Не отвечай по существу и не добавляй фактов."
+	LiveQuestionLabel  = "Вопрос"
+	LiveFragmentsLabel = "Фрагменты"
+	LiveDocumentLabel  = "Документ"
+	LiveEditionLabel   = "Редакция"
+	LiveSectionLabel   = "Раздел"
+	LiveParagraphLabel = "Пункт"
+	LiveAppendixLabel  = "Приложение"
 
 	DraftRecommendation = "В проекте нет отметки о приложении."
 	DraftQuote          = "Точная цитата требования."

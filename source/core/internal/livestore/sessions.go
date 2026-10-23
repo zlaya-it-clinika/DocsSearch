@@ -28,10 +28,43 @@ func (store *LiveStore) Create_Session(ctx context.Context, token string) (strin
 		return "", err
 	}
 	sessionID := "session-" + strconv.Itoa(number)
+	now := time.Now().UTC()
 	_, err = store.pool.Exec(ctx, `
-		INSERT INTO sessions (session_id, owner_user_id, template_step)
-		VALUES ($1, $2, 0)`, sessionID, account.UserID)
+		INSERT INTO sessions (session_id, owner_user_id, template_step, title, created_at, updated_at)
+		VALUES ($1, $2, 0, '', $3, $3)`, sessionID, account.UserID, now)
 	return sessionID, err
+}
+
+type SessionLine struct {
+	SessionID string
+	Title     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (store *LiveStore) List_Sessions(ctx context.Context, token string) ([]SessionLine, error) {
+	account, err := store.Find_AccountByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := store.pool.Query(ctx, `
+		SELECT session_id, title, created_at, updated_at
+		FROM sessions
+		WHERE owner_user_id = $1
+		ORDER BY updated_at DESC, session_id DESC`, account.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	lines := []SessionLine{}
+	for rows.Next() {
+		var line SessionLine
+		if err := rows.Scan(&line.SessionID, &line.Title, &line.CreatedAt, &line.UpdatedAt); err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, rows.Err()
 }
 
 func (store *LiveStore) List_SessionMessages(ctx context.Context, token, sessionID string) ([][]byte, error) {
@@ -76,13 +109,17 @@ func (store *LiveStore) Load_SessionForMessage(ctx context.Context, token, sessi
 	return account, templateStep, nil
 }
 
-func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID string, templateStep int, userBody, assistantBody, auditDocuments []byte, userID, displayName, question string) error {
+func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID string, templateStep int, userBody, assistantBody, auditDocuments []byte, userID, displayName, question, title string) error {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE sessions SET template_step = $2 WHERE session_id = $1`, sessionID, templateStep); err != nil {
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions
+		SET template_step = $2, updated_at = $3, title = CASE WHEN title = '' THEN $4 ELSE title END
+		WHERE session_id = $1`, sessionID, templateStep, now, title); err != nil {
 		return err
 	}
 	var position int
@@ -102,7 +139,7 @@ func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID stri
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_entries (entry_id, user_id, display_name, question, created_at, documents)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-		"audit-"+strconv.Itoa(number), userID, displayName, question, time.Now().UTC(), string(auditDocuments))
+		"audit-"+strconv.Itoa(number), userID, displayName, question, now, string(auditDocuments))
 	if err != nil {
 		return err
 	}

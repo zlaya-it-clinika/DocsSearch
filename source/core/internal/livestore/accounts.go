@@ -32,6 +32,17 @@ func (store *LiveStore) Login_User(ctx context.Context, loginName, password, tok
 	return result, nil
 }
 
+func (store *LiveStore) Delete_AuthToken(ctx context.Context, token string) error {
+	tag, err := store.pool.Exec(ctx, `DELETE FROM auth_tokens WHERE token = $1`, token)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
 func (store *LiveStore) Find_AccountByToken(ctx context.Context, token string) (Account, error) {
 	var account Account
 	err := store.pool.QueryRow(ctx, `

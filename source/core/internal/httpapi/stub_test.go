@@ -25,7 +25,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 		t.Fatalf("me status %d", me.Code)
 	}
 	profile := decodeJSON[profileResponse](t, me)
-	if profile.UserID != texts.SeedEmployeeID || profile.AccessLevel != texts.SeedEmployeeAccessLevel || profile.DisplayName != texts.SeedEmployeeDisplayName {
+	if profile.UserID != texts.SeedEmployeeID || profile.AccessLevel != texts.SeedEmployeeAccessLevel || profile.DisplayName != texts.SeedEmployeeDisplayName || profile.Role != texts.RoleUser {
 		t.Fatalf("profile %+v", profile)
 	}
 
@@ -39,6 +39,17 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 	if answer.Role != "" {
 		t.Fatalf("post message should omit role, got %s", answer.Role)
+	}
+	listed := doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("sessions %d %s", listed.Code, listed.Body.String())
+	}
+	var sessionList struct {
+		Sessions []sessionLine `json:"sessions"`
+	}
+	decodeInto(t, listed, &sessionList)
+	if len(sessionList.Sessions) != 1 || sessionList.Sessions[0].SessionID != sessionID || sessionList.Sessions[0].Title == "" {
+		t.Fatalf("session list %+v", sessionList.Sessions)
 	}
 
 	clarify := postMessage(t, handler, employeeToken, sessionID, "Уточни тип документа")
@@ -164,7 +175,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 	var patchedUser accountResponse
 	decodeInto(t, patched, &patchedUser)
-	if patchedUser.DisplayName != "Сотрудник архива" || patchedUser.AccessLevel != 2 {
+	if patchedUser.DisplayName != "Сотрудник архива" || patchedUser.AccessLevel != 2 || patchedUser.Role != texts.RoleAdmin {
 		t.Fatalf("patched %+v", patchedUser)
 	}
 	if !hasDocument(listDocuments(t, handler, employeeToken), texts.SeedRestrictedID) {
@@ -211,6 +222,22 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 	if employeeToken != "" && !strings.Contains(badPassword.Header().Get("Access-Control-Allow-Origin"), "*") {
 		t.Fatal("missing CORS header")
+	}
+}
+
+func TestLogoutRevokesToken(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	token := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("logout %d %s", response.Code, response.Body.String())
+	}
+	me := doJSON(t, handler, http.MethodGet, "/me", token, nil)
+	if me.Code != http.StatusUnauthorized {
+		t.Fatalf("token still works %d", me.Code)
 	}
 }
 

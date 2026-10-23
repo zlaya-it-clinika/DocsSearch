@@ -19,6 +19,7 @@ services:
       API_PORT: "8080"
       DATABASE_URL: postgres://docs:docs@postgres:5432/docssearch?sslmode=disable
       OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_CHAT_MODEL: qwen2.5:7b
       OLLAMA_EMBED_MODEL: nomic-embed-text
       OLLAMA_EMBED_DIMENSIONS: "768"
       DOCS_PASSWORD: docs

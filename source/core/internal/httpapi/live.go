@@ -10,19 +10,27 @@ import (
 	"strings"
 
 	"docssearch/core/internal/livestore"
+	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
 )
 
 type liveAPI struct {
-	store *livestore.LiveStore
+	store   *livestore.LiveStore
+	chatter interface {
+		Complete_Chat(messages []ollama.ChatMessage) (string, error)
+	}
 }
 
-func register_LiveRoutes(store *livestore.LiveStore) *http.ServeMux {
-	api := &liveAPI{store: store}
+func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
+	Complete_Chat(messages []ollama.ChatMessage) (string, error)
+}) *http.ServeMux {
+	api := &liveAPI{store: store, chatter: chatter}
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("POST /auth/login", api.serve_Login)
+	routeMux.HandleFunc("POST /auth/logout", api.serve_Logout)
 	routeMux.HandleFunc("GET /me", api.serve_CurrentUser)
 	routeMux.HandleFunc("POST /sessions", api.serve_CreateSession)
+	routeMux.HandleFunc("GET /sessions", api.serve_ListSessions)
 	routeMux.HandleFunc("GET /sessions/{sessionId}", api.serve_SessionHistory)
 	routeMux.HandleFunc("POST /sessions/{sessionId}/messages", api.serve_SessionMessage)
 	routeMux.HandleFunc("GET /documents", api.serve_ListDocuments)
@@ -60,7 +68,21 @@ func (api *liveAPI) serve_Login(responseWriter http.ResponseWriter, request *htt
 		UserID:      result.UserID,
 		DisplayName: result.DisplayName,
 		AccessLevel: result.AccessLevel,
+		Role:        role_ForAccessLevel(result.AccessLevel),
 	})
+}
+
+func (api *liveAPI) serve_Logout(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if err := api.store.Delete_AuthToken(request.Context(), token); err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (api *liveAPI) serve_CurrentUser(responseWriter http.ResponseWriter, request *http.Request) {
@@ -78,6 +100,7 @@ func (api *liveAPI) serve_CurrentUser(responseWriter http.ResponseWriter, reques
 		UserID:      account.UserID,
 		DisplayName: account.DisplayName,
 		AccessLevel: account.AccessLevel,
+		Role:        role_ForAccessLevel(account.AccessLevel),
 	})
 }
 
@@ -95,6 +118,31 @@ func (api *liveAPI) serve_CreateSession(responseWriter http.ResponseWriter, requ
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
 	}{SessionID: sessionID})
+}
+
+func (api *liveAPI) serve_ListSessions(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	sessions, err := api.store.List_Sessions(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	lines := make([]sessionLine, 0, len(sessions))
+	for _, session := range sessions {
+		lines = append(lines, sessionLine{
+			SessionID: session.SessionID,
+			Title:     session.Title,
+			CreatedAt: session.CreatedAt.UTC().Format(timeLayout),
+			UpdatedAt: session.UpdatedAt.UTC().Format(timeLayout),
+		})
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
+		Sessions []sessionLine `json:"sessions"`
+	}{Sessions: lines})
 }
 
 func (api *liveAPI) serve_SessionHistory(responseWriter http.ResponseWriter, request *http.Request) {
@@ -137,7 +185,38 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		return
 	}
 	session := &sessionRecord{templateStep: templateStep}
-	reply := build_AssistantReply(session, body.Text)
+	var reply assistantReply
+	var documents []shownDocument
+	if templateStep == templateStepAsked {
+		reply = build_AssistantReply(session, body.Text)
+		documents = []shownDocument{}
+	} else if strings.Contains(strings.ToLower(body.Text), texts.PhraseTemplate) {
+		session.templateStep = templateStepAsked
+		reply = build_TemplateFieldReply()
+		documents = []shownDocument{}
+	} else {
+		historyRaw, historyError := api.store.List_SessionMessages(request.Context(), token, request.PathValue("sessionId"))
+		if historyError != nil {
+			write_LiveError(responseWriter, historyError)
+			return
+		}
+		embedding, embedError := api.store.Embed_Question(body.Text)
+		if embedError != nil {
+			write_LiveError(responseWriter, embedError)
+			return
+		}
+		chunks, searchError := api.store.Find_ReplyChunks(request.Context(), embedding, account.AccessLevel)
+		if searchError != nil {
+			write_LiveError(responseWriter, searchError)
+			return
+		}
+		var replyError error
+		reply, documents, replyError = build_LiveAssistantReply(api.chatter, body.Text, read_ChatHistory(historyRaw), chunks)
+		if replyError != nil {
+			write_LiveError(responseWriter, replyError)
+			return
+		}
+	}
 	userBody, err := json.Marshal(userLine{Role: "user", Text: body.Text})
 	if err != nil {
 		write_LiveError(responseWriter, err)
@@ -150,20 +229,15 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
-	documents := []shownDocument{}
-	if reply.Kind == texts.KindAnswer {
-		documents = []shownDocument{{
-			DocumentID: texts.SeedInstructionID,
-			Title:      texts.SeedInstructionTitle,
-			Paragraph:  texts.AnswerParagraph,
-		}}
+	if documents == nil {
+		documents = []shownDocument{}
 	}
 	auditDocuments, err := json.Marshal(documents)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text)
+	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text, build_SessionTitle(body.Text))
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
@@ -285,6 +359,7 @@ func (api *liveAPI) serve_ListUsers(responseWriter http.ResponseWriter, request 
 			Login:       account.Login,
 			DisplayName: account.DisplayName,
 			AccessLevel: account.AccessLevel,
+			Role:        role_ForAccessLevel(account.AccessLevel),
 		})
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
@@ -328,6 +403,7 @@ func (api *liveAPI) serve_CreateUser(responseWriter http.ResponseWriter, request
 		Login:       account.Login,
 		DisplayName: account.DisplayName,
 		AccessLevel: account.AccessLevel,
+		Role:        role_ForAccessLevel(account.AccessLevel),
 	})
 }
 
@@ -359,6 +435,7 @@ func (api *liveAPI) serve_PatchUser(responseWriter http.ResponseWriter, request 
 		Login:       account.Login,
 		DisplayName: account.DisplayName,
 		AccessLevel: account.AccessLevel,
+		Role:        role_ForAccessLevel(account.AccessLevel),
 	})
 }
 

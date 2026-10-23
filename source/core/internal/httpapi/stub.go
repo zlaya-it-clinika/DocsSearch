@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +44,9 @@ type documentRecord struct {
 type sessionRecord struct {
 	id           string
 	ownerID      string
+	title        string
+	createdAt    time.Time
+	updatedAt    time.Time
 	messages     []any
 	templateStep int
 }
@@ -84,12 +88,14 @@ type loginResponse struct {
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
+	Role        string `json:"role"`
 }
 
 type profileResponse struct {
 	UserID      string `json:"userId"`
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
+	Role        string `json:"role"`
 }
 
 type accountResponse struct {
@@ -97,6 +103,14 @@ type accountResponse struct {
 	Login       string `json:"login"`
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
+	Role        string `json:"role"`
+}
+
+type sessionLine struct {
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 type documentResponse struct {
@@ -192,8 +206,10 @@ func (stubStore *stub) addDocument(id, title, edition string, accessLevel int, f
 func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("POST /auth/login", stubStore.serve_Login)
+	routeMux.HandleFunc("POST /auth/logout", stubStore.serve_Logout)
 	routeMux.HandleFunc("GET /me", stubStore.serve_CurrentUser)
 	routeMux.HandleFunc("POST /sessions", stubStore.serve_CreateSession)
+	routeMux.HandleFunc("GET /sessions", stubStore.serve_ListSessions)
 	routeMux.HandleFunc("GET /sessions/{sessionId}", stubStore.serve_SessionHistory)
 	routeMux.HandleFunc("POST /sessions/{sessionId}/messages", stubStore.serve_SessionMessage)
 	routeMux.HandleFunc("GET /documents", stubStore.serve_ListDocuments)
@@ -234,7 +250,20 @@ func (stubStore *stub) serve_Login(responseWriter http.ResponseWriter, request *
 		UserID:      record.id,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
+		Role:        role_ForAccessLevel(record.accessLevel),
 	})
+}
+
+func (stubStore *stub) serve_Logout(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	token, found := read_BearerToken(request)
+	if !found || stubStore.tokens[token] == "" {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	delete(stubStore.tokens, token)
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (stubStore *stub) serve_CurrentUser(responseWriter http.ResponseWriter, request *http.Request) {
@@ -249,6 +278,7 @@ func (stubStore *stub) serve_CurrentUser(responseWriter http.ResponseWriter, req
 		UserID:      record.id,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
+		Role:        role_ForAccessLevel(record.accessLevel),
 	})
 }
 
@@ -262,14 +292,43 @@ func (stubStore *stub) serve_CreateSession(responseWriter http.ResponseWriter, r
 	}
 	sessionID := "session-" + strconv.Itoa(stubStore.nextSession)
 	stubStore.nextSession++
+	now := time.Now().UTC()
 	stubStore.sessions[sessionID] = &sessionRecord{
-		id:       sessionID,
-		ownerID:  record.id,
-		messages: []any{},
+		id:        sessionID,
+		ownerID:   record.id,
+		createdAt: now,
+		updatedAt: now,
+		messages:  []any{},
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
 	}{SessionID: sessionID})
+}
+
+func (stubStore *stub) serve_ListSessions(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	lines := []sessionLine{}
+	for _, session := range stubStore.sessions {
+		if session.ownerID != record.id {
+			continue
+		}
+		lines = append(lines, session.line())
+	}
+	sort.Slice(lines, func(left, right int) bool {
+		if lines[left].UpdatedAt == lines[right].UpdatedAt {
+			return lines[left].SessionID > lines[right].SessionID
+		}
+		return lines[left].UpdatedAt > lines[right].UpdatedAt
+	})
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
+		Sessions []sessionLine `json:"sessions"`
+	}{Sessions: lines})
 }
 
 func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, request *http.Request) {
@@ -305,6 +364,10 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	}
 	record := stubStore.usersByID[session.ownerID]
 	reply := build_AssistantReply(session, body.Text)
+	if session.title == "" {
+		session.title = build_SessionTitle(body.Text)
+	}
+	session.updatedAt = time.Now().UTC()
 	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text})
 	stored := reply
 	stored.Role = "assistant"
@@ -625,7 +688,35 @@ func (record *userRecord) account() accountResponse {
 		Login:       record.login,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
+		Role:        role_ForAccessLevel(record.accessLevel),
 	}
+}
+
+func (session *sessionRecord) line() sessionLine {
+	return sessionLine{
+		SessionID: session.id,
+		Title:     session.title,
+		CreatedAt: session.createdAt.UTC().Format(time.RFC3339),
+		UpdatedAt: session.updatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func role_ForAccessLevel(accessLevel int) string {
+	if accessLevel >= adminAccessLevel {
+		return texts.RoleAdmin
+	}
+	return texts.RoleUser
+}
+
+// Заголовок чата берётся из первого вопроса и дальше не меняется.
+func build_SessionTitle(text string) string {
+	collapsed := strings.Join(strings.Fields(text), " ")
+	runes := []rune(collapsed)
+	const titleRuneLimit = 60
+	if len(runes) <= titleRuneLimit {
+		return collapsed
+	}
+	return strings.TrimSpace(string(runes[:titleRuneLimit-3])) + "..."
 }
 
 func (document *documentRecord) public() documentResponse {

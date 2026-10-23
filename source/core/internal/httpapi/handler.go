@@ -48,12 +48,12 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 		if strings.TrimSpace(loadedConfig.DatabaseURL) == "" {
 			return nil, errors.New(texts.LiveDatabaseMissing)
 		}
-		embedder := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel)
+		embedder := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel, loadedConfig.OllamaChatModel)
 		store, err := livestore.Open_LiveStore(loadedConfig.DatabaseURL, loadedConfig.OllamaEmbedDimensions, embedder)
 		if err != nil {
 			return nil, err
 		}
-		routeMux = register_LiveRoutes(store)
+		routeMux = register_LiveRoutes(store, embedder)
 	} else {
 		routeMux = create_StubStore().register_StubRoutes()
 	}
