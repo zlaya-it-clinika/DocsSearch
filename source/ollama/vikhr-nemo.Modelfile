@@ -1,0 +1,15 @@
+# Чат-модель DocsSearch: Vikhr-Nemo-12B-Instruct-R-21-09-24 (Mistral-Nemo, русский и английский, Apache-2.0).
+# Создание модели в Ollama:  ollama create vikhr-nemo -f vikhr-nemo.Modelfile
+# В .env ядра:               OLLAMA_CHAT_MODEL=vikhr-nemo
+
+# Готовая квантизация Q4_K_M, около 7 ГБ. Ollama скачает её с Hugging Face сама.
+# Своя дообученная версия: заменить строку на путь к своему файлу, например FROM ./vikhr-docs-Q4_K_M.gguf
+FROM hf.co/bartowski/Vikhr-Nemo-12B-Instruct-R-21-09-24-GGUF:Q4_K_M
+
+# Авторы модели советуют temperature 0.1-0.5 и top_k 30-50: при 1.0 появляются артефакты.
+# Ядро не передаёт параметры генерации, поэтому они задаются здесь
+PARAMETER temperature 0.3
+PARAMETER top_k 40
+
+# Окно контекста: вопрос, история сессии и найденные фрагменты. Модель держит до 128k, но память растёт с окном
+PARAMETER num_ctx 8192

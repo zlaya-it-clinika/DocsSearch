@@ -62,6 +62,18 @@ export const SidebarTexts = Object.freeze({
 	adminPanel: 'Админ-панель',
 	documents: 'Документы',
 	logout: 'Выйти',
+	groupPinned: 'Закреплённые',
+	chatMenu: 'Действия с чатом',
+	chatRename: 'Переименовать',
+	chatPin: 'Закрепить',
+	chatUnpin: 'Открепить',
+	chatDelete: 'Удалить',
+	chatRenameLabel: 'Новое название чата',
+	chatRenamed: 'Чат переименован',
+	chatDeleteTitle: 'Удалить чат?',
+	chatDeleteText: 'Чат «{title}» и вся его история будут удалены. Отменить это нельзя.',
+	chatDeleteConfirm: 'Удалить',
+	chatDeleted: 'Чат удалён',
 });
 
 export const ChatTexts = Object.freeze({

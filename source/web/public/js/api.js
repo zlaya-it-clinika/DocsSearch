@@ -112,6 +112,15 @@ export function create_ChatSession() {
 	return request_Api('POST', '/sessions');
 }
 
+// Переименование и удаление чата. Доступны, когда GET /sessions отдаёт canRename и canDelete
+export function rename_ChatSession(sessionId, title) {
+	return request_Api('PATCH', `/sessions/${encode_Segment(sessionId)}`, { json: { title } });
+}
+
+export function delete_ChatSession(sessionId) {
+	return request_Api('DELETE', `/sessions/${encode_Segment(sessionId)}`);
+}
+
 export function fetch_ChatSession(sessionId) {
 	return request_Api('GET', `/sessions/${encode_Segment(sessionId)}`);
 }

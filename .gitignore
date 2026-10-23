@@ -81,3 +81,7 @@ desktop.ini
 $RECYCLE.BIN/
 .DS_Store
 ._*
+
+# Веса моделей: передаются через общий диск, не через git
+*.gguf
+*.safetensors
