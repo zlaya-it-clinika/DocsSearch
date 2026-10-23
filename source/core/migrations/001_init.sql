@@ -31,9 +31,12 @@ CREATE TABLE IF NOT EXISTS session_messages (
 
 CREATE TABLE IF NOT EXISTS documents (
 	document_id text PRIMARY KEY,
-	title text UNIQUE NOT NULL,
+	title text NOT NULL,
 	edition text NOT NULL,
 	access_level int NOT NULL,
+	scope text NOT NULL DEFAULT 'global',
+	owner_id text NOT NULL DEFAULT '',
+	uploaded_at timestamptz NOT NULL DEFAULT now(),
 	file_name text NOT NULL,
 	content_type text NOT NULL,
 	body bytea NOT NULL
@@ -46,6 +49,8 @@ CREATE TABLE IF NOT EXISTS chunks (
 	paragraph text NOT NULL DEFAULT '',
 	appendix text NOT NULL DEFAULT '',
 	access_level int NOT NULL,
+	scope text NOT NULL DEFAULT 'global',
+	owner_id text NOT NULL DEFAULT '',
 	content text NOT NULL,
 	embedding vector(768) NOT NULL
 );
@@ -77,3 +82,14 @@ ON CONFLICT (name) DO NOTHING;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'global';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS uploaded_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_title_key;
+
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'global';
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS documents_global_title_idx ON documents (title) WHERE scope = 'global';
+CREATE UNIQUE INDEX IF NOT EXISTS documents_personal_title_idx ON documents (owner_id, title) WHERE scope = 'personal';

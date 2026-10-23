@@ -11,6 +11,10 @@ const (
 	RoleAdmin = "admin"
 	RoleUser  = "user"
 
+	ScopeGlobal   = "global"
+	ScopePersonal = "personal"
+	ScopeAll      = "all"
+
 	ErrorInvalidCredentials = "invalid_credentials"
 	ErrorUnauthorized       = "unauthorized"
 	ErrorAccessDenied       = "access_denied"

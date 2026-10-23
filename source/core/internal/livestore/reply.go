@@ -22,6 +22,7 @@ type ReplyCitation struct {
 	Appendix     string
 	Quote        string
 	OriginalLink string
+	Scope        string
 }
 
 func (store *LiveStore) Embed_Question(text string) ([]float32, error) {
@@ -35,25 +36,41 @@ func (store *LiveStore) Embed_Question(text string) ([]float32, error) {
 	return vectors[0], nil
 }
 
-func (store *LiveStore) Find_ReplyChunks(ctx context.Context, embedding []float32, accessLevel int) ([]SimilarChunk, error) {
-	return store.Find_ChunksBySimilarity(ctx, embedding, accessLevel, replyChunkLimit)
+func (store *LiveStore) Find_ReplyChunks(ctx context.Context, embedding []float32, userID string, accessLevel int) ([]SimilarChunk, []SimilarChunk, error) {
+	visible, err := store.Find_ChunksBySimilarity(ctx, embedding, userID, accessLevel, replyChunkLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if kind, _ := Choose_LiveReplyKind(visible, nil); kind != texts.KindFallback {
+		return visible, nil, nil
+	}
+	closed, err := store.Find_ClosedGlobalChunks(ctx, embedding, accessLevel, replyChunkLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	return visible, closed, nil
 }
 
 func similarity_OfChunk(chunk SimilarChunk) float64 {
 	return 1 - chunk.Distance
 }
 
-// Нет фрагмента с близостью от 0.4 - fallback, модель не нужна.
-// Два близких фрагмента из разных документов, разрыв близости меньше 0.05 - clarify.
-// Иначе answer по фрагментам, которые прошли порог.
-func Choose_LiveReplyKind(chunks []SimilarChunk) (string, []SimilarChunk) {
-	selected := make([]SimilarChunk, 0, len(chunks))
-	for _, chunk := range chunks {
+// Нет видимого фрагмента с близостью от 0.4. Если близкий фрагмент есть только в закрытом общем документе - access_denied.
+// Два близких видимых фрагмента из разных документов, разрыв близости меньше 0.05 - clarify.
+// Иначе answer по видимым фрагментам, которые прошли порог.
+func Choose_LiveReplyKind(visible []SimilarChunk, closed []SimilarChunk) (string, []SimilarChunk) {
+	selected := make([]SimilarChunk, 0, len(visible))
+	for _, chunk := range visible {
 		if similarity_OfChunk(chunk) >= minReplySimilarity {
 			selected = append(selected, chunk)
 		}
 	}
 	if len(selected) == 0 {
+		for _, chunk := range closed {
+			if similarity_OfChunk(chunk) >= minReplySimilarity {
+				return texts.KindAccessDenied, nil
+			}
+		}
 		return texts.KindFallback, nil
 	}
 	if len(selected) >= 2 && selected[0].DocumentID != selected[1].DocumentID {
@@ -88,6 +105,7 @@ func Build_ReplyCitations(chunks []SimilarChunk) []ReplyCitation {
 			Appendix:     chunk.Appendix,
 			Quote:        chunk.Content,
 			OriginalLink: original_Link(chunk.DocumentID, chunk.Paragraph),
+			Scope:        chunk.Scope,
 		})
 	}
 	return citations

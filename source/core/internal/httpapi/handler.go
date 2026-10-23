@@ -65,7 +65,7 @@ func allow_CrossOrigin(nextHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
 		responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		responseWriter.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+		responseWriter.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		if request.Method == http.MethodOptions {
 			responseWriter.WriteHeader(http.StatusNoContent)
 			return

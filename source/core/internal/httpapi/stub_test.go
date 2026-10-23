@@ -34,8 +34,8 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	if answer.Kind != texts.KindAnswer || answer.RelevancePercent != texts.AnswerRelevancePercent || len(answer.Citations) != 1 {
 		t.Fatalf("answer %+v", answer)
 	}
-	if answer.Citations[0].OriginalLink != "/documents/doc-1/file#p3.2" {
-		t.Fatalf("link %s", answer.Citations[0].OriginalLink)
+	if answer.Citations[0].OriginalLink != "/documents/doc-1/file#p3.2" || answer.Citations[0].DocumentID != texts.SeedInstructionID || answer.Citations[0].Scope != texts.ScopeGlobal {
+		t.Fatalf("link %+v", answer.Citations[0])
 	}
 	if answer.Role != "" {
 		t.Fatalf("post message should omit role, got %s", answer.Role)
@@ -162,7 +162,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	if len(auditBody.Entries) == 0 || auditBody.Entries[0].Question != "Как зарегистрировать входящий документ?" {
 		t.Fatalf("audit %+v", auditBody.Entries)
 	}
-	if len(auditBody.Entries[0].Documents) != 1 || auditBody.Entries[0].Documents[0].DocumentID != texts.SeedInstructionID {
+	if len(auditBody.Entries[0].Documents) != 1 || auditBody.Entries[0].Documents[0].DocumentID != texts.SeedInstructionID || auditBody.Entries[0].Documents[0].Scope != texts.ScopeGlobal {
 		t.Fatalf("audit documents %+v", auditBody.Entries[0].Documents)
 	}
 
@@ -271,6 +271,114 @@ func TestDebugLogSkipsSecrets(t *testing.T) {
 	}
 }
 
+func TestDocumentScopeListUploadAndDelete(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	adminToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+
+	employeeList := listDocumentPage(t, handler, employeeToken, "")
+	if employeeList.CanUploadGlobal || !employeeList.CanUploadPersonal || len(employeeList.Documents) != 1 {
+		t.Fatalf("employee list %+v", employeeList)
+	}
+	if employeeList.Documents[0].Scope != texts.ScopeGlobal || employeeList.Documents[0].CanDelete || employeeList.Documents[0].OwnerID != "" {
+		t.Fatalf("seed line %+v", employeeList.Documents[0])
+	}
+	adminList := listDocumentPage(t, handler, adminToken, "")
+	if !adminList.CanUploadGlobal || !adminList.CanUploadPersonal || len(adminList.Documents) != 2 {
+		t.Fatalf("admin list %+v", adminList)
+	}
+	for _, document := range adminList.Documents {
+		if !document.CanDelete || document.Scope != texts.ScopeGlobal {
+			t.Fatalf("admin seed %+v", document)
+		}
+	}
+
+	globalDenied := uploadMultipart(t, handler, "/documents", employeeToken, "global.txt", "text", map[string]string{
+		"title": "Общий от сотрудника",
+		"scope": texts.ScopeGlobal,
+	})
+	if globalDenied.Code != http.StatusForbidden {
+		t.Fatalf("employee global upload %d %s", globalDenied.Code, globalDenied.Body.String())
+	}
+
+	personal := uploadMultipart(t, handler, "/documents", employeeToken, "mine.txt", "мой текст", map[string]string{
+		"title":       texts.SeedInstructionTitle,
+		"edition":     "9.0",
+		"scope":       texts.ScopePersonal,
+		"accessLevel": "2",
+	})
+	if personal.Code != http.StatusOK {
+		t.Fatalf("personal upload %d %s", personal.Code, personal.Body.String())
+	}
+	uploaded := decodeJSON[uploadResponse](t, personal)
+	if uploaded.DocumentID == texts.SeedInstructionID || uploaded.Scope != texts.ScopePersonal {
+		t.Fatalf("personal result %+v", uploaded)
+	}
+	ownPage := listDocumentPage(t, handler, employeeToken, "personal")
+	if len(ownPage.Documents) != 1 || ownPage.Documents[0].DocumentID != uploaded.DocumentID || ownPage.Documents[0].AccessLevel != texts.SeedEmployeeAccessLevel {
+		t.Fatalf("own page %+v", ownPage.Documents)
+	}
+	globalPage := listDocumentPage(t, handler, employeeToken, "global")
+	if hasDocument(globalPage.Documents, uploaded.DocumentID) || !hasDocument(globalPage.Documents, texts.SeedInstructionID) {
+		t.Fatalf("global page %+v", globalPage.Documents)
+	}
+	if ownPage.Documents[0].OwnerID != texts.SeedEmployeeID || ownPage.Documents[0].OwnerName != texts.SeedEmployeeDisplayName || !ownPage.Documents[0].CanDelete || ownPage.Documents[0].UploadedAt == "" {
+		t.Fatalf("own line %+v", ownPage.Documents[0])
+	}
+	if hasDocument(listDocumentPage(t, handler, adminToken, "").Documents, uploaded.DocumentID) {
+		t.Fatal("admin default list includes a foreign personal document")
+	}
+	allDenied := doJSON(t, handler, http.MethodGet, "/documents?scope=all", employeeToken, nil)
+	if allDenied.Code != http.StatusForbidden {
+		t.Fatalf("employee scope all %d", allDenied.Code)
+	}
+	allPage := listDocumentPage(t, handler, adminToken, "all")
+	if !hasDocument(allPage.Documents, uploaded.DocumentID) || !hasDocument(allPage.Documents, texts.SeedRestrictedID) {
+		t.Fatalf("admin all %+v", allPage.Documents)
+	}
+
+	foreignFile := doRaw(t, handler, http.MethodGet, "/documents/"+uploaded.DocumentID+"/file", adminToken, nil, "")
+	if foreignFile.Code != http.StatusOK || foreignFile.Body.String() != "мой текст" {
+		t.Fatalf("admin reads personal %d %s", foreignFile.Code, foreignFile.Body.String())
+	}
+	secondEmployee := doJSON(t, handler, http.MethodPost, "/users", adminToken, map[string]any{
+		"login":       "other",
+		"password":    "other",
+		"displayName": "Другой",
+		"accessLevel": 1,
+	})
+	if secondEmployee.Code != http.StatusOK {
+		t.Fatalf("second user %d %s", secondEmployee.Code, secondEmployee.Body.String())
+	}
+	otherToken := login(t, handler, "other", "other")
+	hiddenFile := doRaw(t, handler, http.MethodGet, "/documents/"+uploaded.DocumentID+"/file", otherToken, nil, "")
+	if hiddenFile.Code != http.StatusNotFound {
+		t.Fatalf("foreign personal file %d", hiddenFile.Code)
+	}
+	hiddenDelete := doRaw(t, handler, http.MethodDelete, "/documents/"+uploaded.DocumentID, otherToken, nil, "")
+	if hiddenDelete.Code != http.StatusNotFound {
+		t.Fatalf("foreign personal delete %d", hiddenDelete.Code)
+	}
+	globalDelete := doRaw(t, handler, http.MethodDelete, "/documents/"+texts.SeedInstructionID, employeeToken, nil, "")
+	if globalDelete.Code != http.StatusForbidden {
+		t.Fatalf("employee global delete %d", globalDelete.Code)
+	}
+	ownDelete := doRaw(t, handler, http.MethodDelete, "/documents/"+uploaded.DocumentID, employeeToken, nil, "")
+	if ownDelete.Code != http.StatusNoContent {
+		t.Fatalf("own delete %d %s", ownDelete.Code, ownDelete.Body.String())
+	}
+	if hasDocument(listDocumentPage(t, handler, employeeToken, "").Documents, uploaded.DocumentID) {
+		t.Fatal("deleted personal document is still listed")
+	}
+	adminDelete := doRaw(t, handler, http.MethodDelete, "/documents/"+texts.SeedRestrictedID, adminToken, nil, "")
+	if adminDelete.Code != http.StatusNoContent {
+		t.Fatalf("admin delete %d", adminDelete.Code)
+	}
+	if hasDocument(listDocumentPage(t, handler, adminToken, "all").Documents, texts.SeedRestrictedID) {
+		t.Fatal("deleted global document is still listed")
+	}
+}
+
 func must_Handler(t *testing.T, loadedConfig config.Config) http.Handler {
 	t.Helper()
 	handler, err := NewHandler(loadedConfig)
@@ -323,15 +431,30 @@ func postMessage(t *testing.T, handler http.Handler, token, sessionID, text stri
 
 func listDocuments(t *testing.T, handler http.Handler, token string) []documentResponse {
 	t.Helper()
-	response := doJSON(t, handler, http.MethodGet, "/documents", token, nil)
+	return listDocumentPage(t, handler, token, "").Documents
+}
+
+func listDocumentPage(t *testing.T, handler http.Handler, token, scope string) struct {
+	CanUploadGlobal   bool               `json:"canUploadGlobal"`
+	CanUploadPersonal bool               `json:"canUploadPersonal"`
+	Documents         []documentResponse `json:"documents"`
+} {
+	t.Helper()
+	path := "/documents"
+	if scope != "" {
+		path += "?scope=" + scope
+	}
+	response := doJSON(t, handler, http.MethodGet, path, token, nil)
 	if response.Code != http.StatusOK {
-		t.Fatalf("documents status %d", response.Code)
+		t.Fatalf("documents status %d body %s", response.Code, response.Body.String())
 	}
 	var body struct {
-		Documents []documentResponse `json:"documents"`
+		CanUploadGlobal   bool               `json:"canUploadGlobal"`
+		CanUploadPersonal bool               `json:"canUploadPersonal"`
+		Documents         []documentResponse `json:"documents"`
 	}
 	decodeInto(t, response, &body)
-	return body.Documents
+	return body
 }
 
 func hasDocument(documents []documentResponse, documentID string) bool {

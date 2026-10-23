@@ -36,6 +36,9 @@ type documentRecord struct {
 	title       string
 	edition     string
 	accessLevel int
+	scope       string
+	ownerID     string
+	uploadedAt  time.Time
 	fileName    string
 	contentType string
 	body        []byte
@@ -59,6 +62,8 @@ type citation struct {
 	Appendix     string `json:"appendix"`
 	Quote        string `json:"quote"`
 	OriginalLink string `json:"originalLink"`
+	DocumentID   string `json:"documentId"`
+	Scope        string `json:"scope"`
 }
 
 type templateState struct {
@@ -118,18 +123,25 @@ type documentResponse struct {
 	Title       string `json:"title"`
 	Edition     string `json:"edition"`
 	AccessLevel int    `json:"accessLevel"`
+	Scope       string `json:"scope"`
+	OwnerID     string `json:"ownerId"`
+	OwnerName   string `json:"ownerName"`
+	UploadedAt  string `json:"uploadedAt"`
+	CanDelete   bool   `json:"canDelete"`
 }
 
 type uploadResponse struct {
 	DocumentID string `json:"documentId"`
 	Status     string `json:"status"`
 	Edition    string `json:"edition"`
+	Scope      string `json:"scope"`
 }
 
 type shownDocument struct {
 	DocumentID string `json:"documentId"`
 	Title      string `json:"title"`
 	Paragraph  string `json:"paragraph"`
+	Scope      string `json:"scope"`
 }
 
 type auditEntry struct {
@@ -195,6 +207,8 @@ func (stubStore *stub) addDocument(id, title, edition string, accessLevel int, f
 		title:       title,
 		edition:     edition,
 		accessLevel: accessLevel,
+		scope:       texts.ScopeGlobal,
+		uploadedAt:  time.Now().UTC(),
 		fileName:    fileName,
 		contentType: contentType,
 		body:        body,
@@ -215,6 +229,7 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("GET /documents", stubStore.serve_ListDocuments)
 	routeMux.HandleFunc("POST /documents", stubStore.serve_UploadDocument)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
+	routeMux.HandleFunc("DELETE /documents/{documentId}", stubStore.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /users", stubStore.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", stubStore.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", stubStore.serve_PatchUser)
@@ -377,6 +392,11 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 }
 
 func (stubStore *stub) serve_ListDocuments(responseWriter http.ResponseWriter, request *http.Request) {
+	scopeFilter, scopeOK := read_ListScope(request.URL.Query().Get("scope"))
+	if !scopeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
 	record, found := stubStore.find_UserByBearerToken(request)
@@ -384,16 +404,26 @@ func (stubStore *stub) serve_ListDocuments(responseWriter http.ResponseWriter, r
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
+	if scopeFilter == texts.ScopeAll && record.accessLevel < adminAccessLevel {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
 	visible := make([]documentResponse, 0)
 	for _, document := range stubStore.documents {
-		if record.accessLevel < document.accessLevel {
+		if !document_MatchesList(scopeFilter, document.scope, document.ownerID, record.id, document.accessLevel, record.accessLevel) {
 			continue
 		}
-		visible = append(visible, document.public())
+		visible = append(visible, document.line(record, stubStore.ownerName(document)))
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Documents []documentResponse `json:"documents"`
-	}{Documents: visible})
+		CanUploadGlobal   bool               `json:"canUploadGlobal"`
+		CanUploadPersonal bool               `json:"canUploadPersonal"`
+		Documents         []documentResponse `json:"documents"`
+	}{
+		CanUploadGlobal:   check_CanUploadGlobal(record.accessLevel),
+		CanUploadPersonal: true,
+		Documents:         visible,
+	})
 }
 
 func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, request *http.Request) {
@@ -413,28 +443,42 @@ func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, 
 	if edition == "" {
 		edition = texts.EditionDefault
 	}
-	accessLevel := texts.SeedDocumentAccessOpen
-	if rawLevel := strings.TrimSpace(request.FormValue("accessLevel")); rawLevel != "" {
-		parsed, parseErr := strconv.Atoi(rawLevel)
-		if parseErr != nil {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	scope, scopeOK := read_UploadScope(request.FormValue("scope"), record.accessLevel)
+	if !scopeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	if scope == texts.ScopeGlobal && !check_CanUploadGlobal(record.accessLevel) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	accessLevel := record.accessLevel
+	if scope == texts.ScopeGlobal {
+		parsed, levelOK := read_AccessLevel(request.FormValue("accessLevel"), texts.SeedDocumentAccessOpen)
+		if !levelOK {
 			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 			return
 		}
 		accessLevel = parsed
 	}
-	stubStore.mu.Lock()
-	defer stubStore.mu.Unlock()
-	if _, found := stubStore.find_UserByBearerToken(request); !found {
-		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
-		return
-	}
 	cleanName := filepath.Base(fileName)
 	if cleanName == "" || cleanName == "." {
 		cleanName = "document.bin"
 	}
-	// То же название заменяет актуальную редакцию, идентификатор документа сохраняется.
+	ownerID := ""
+	if scope == texts.ScopePersonal {
+		ownerID = record.id
+	}
+	now := time.Now().UTC()
 	for _, document := range stubStore.documents {
-		if document.title != title {
+		if !same_DocumentTitle(document, title, scope, ownerID) {
 			continue
 		}
 		document.edition = edition
@@ -442,20 +486,36 @@ func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, 
 		document.fileName = cleanName
 		document.contentType = contentType
 		document.body = body
+		document.uploadedAt = now
 		write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
 			DocumentID: document.id,
 			Status:     texts.StatusAccepted,
 			Edition:    document.edition,
+			Scope:      document.scope,
 		})
 		return
 	}
 	documentID := "doc-" + strconv.Itoa(stubStore.nextDocument)
 	stubStore.nextDocument++
-	stubStore.addDocument(documentID, title, edition, accessLevel, cleanName, contentType, body)
+	created := &documentRecord{
+		id:          documentID,
+		title:       title,
+		edition:     edition,
+		accessLevel: accessLevel,
+		scope:       scope,
+		ownerID:     ownerID,
+		uploadedAt:  now,
+		fileName:    cleanName,
+		contentType: contentType,
+		body:        body,
+	}
+	stubStore.documents = append(stubStore.documents, created)
+	stubStore.documentsByID[documentID] = created
 	write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
 		DocumentID: documentID,
 		Status:     texts.StatusAccepted,
 		Edition:    edition,
+		Scope:      scope,
 	})
 }
 
@@ -472,14 +532,76 @@ func (stubStore *stub) serve_DocumentFile(responseWriter http.ResponseWriter, re
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
-	if record.accessLevel < document.accessLevel {
-		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+	if status := document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel); status != http.StatusOK {
+		if status == http.StatusNotFound {
+			write_ErrorResponse(responseWriter, status, texts.ErrorNotFound)
+			return
+		}
+		write_ErrorResponse(responseWriter, status, texts.ErrorAccessDenied)
 		return
 	}
 	responseWriter.Header().Set("Content-Type", document.contentType)
 	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(document.fileName))
 	responseWriter.WriteHeader(http.StatusOK)
 	_, _ = responseWriter.Write(document.body)
+}
+
+func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	documentID := request.PathValue("documentId")
+	document := stubStore.documentsByID[documentID]
+	if document == nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return
+	}
+	if status := document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel); status != http.StatusOK {
+		if status == http.StatusNotFound {
+			write_ErrorResponse(responseWriter, status, texts.ErrorNotFound)
+			return
+		}
+		write_ErrorResponse(responseWriter, status, texts.ErrorAccessDenied)
+		return
+	}
+	if !check_CanDeleteDocument(record.id, record.accessLevel, document.scope, document.ownerID) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	delete(stubStore.documentsByID, documentID)
+	remaining := stubStore.documents[:0]
+	for _, item := range stubStore.documents {
+		if item.id != documentID {
+			remaining = append(remaining, item)
+		}
+	}
+	stubStore.documents = remaining
+	responseWriter.WriteHeader(http.StatusNoContent)
+}
+
+func same_DocumentTitle(document *documentRecord, title, scope, ownerID string) bool {
+	if document.title != title || document.scope != scope {
+		return false
+	}
+	if scope == texts.ScopePersonal {
+		return document.ownerID == ownerID
+	}
+	return true
+}
+
+func (stubStore *stub) ownerName(document *documentRecord) string {
+	if document.scope != texts.ScopePersonal {
+		return ""
+	}
+	owner := stubStore.usersByID[document.ownerID]
+	if owner == nil {
+		return ""
+	}
+	return owner.displayName
 }
 
 func (stubStore *stub) serve_ListUsers(responseWriter http.ResponseWriter, request *http.Request) {
@@ -611,6 +733,8 @@ func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, requ
 					Appendix:     "",
 					Quote:        texts.DraftQuote,
 					OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.DraftParagraph),
+					DocumentID:   texts.SeedInstructionID,
+					Scope:        texts.ScopeGlobal,
 				},
 			},
 		},
@@ -669,6 +793,7 @@ func (stubStore *stub) append_AuditEntry(record *userRecord, question, kind stri
 			DocumentID: texts.SeedInstructionID,
 			Title:      texts.SeedInstructionTitle,
 			Paragraph:  texts.AnswerParagraph,
+			Scope:      texts.ScopeGlobal,
 		}}
 	}
 	stubStore.audit = append(stubStore.audit, auditEntry{
@@ -719,12 +844,17 @@ func build_SessionTitle(text string) string {
 	return strings.TrimSpace(string(runes[:titleRuneLimit-3])) + "..."
 }
 
-func (document *documentRecord) public() documentResponse {
+func (document *documentRecord) line(viewer *userRecord, ownerName string) documentResponse {
 	return documentResponse{
 		DocumentID:  document.id,
 		Title:       document.title,
 		Edition:     document.edition,
 		AccessLevel: document.accessLevel,
+		Scope:       document.scope,
+		OwnerID:     document.ownerID,
+		OwnerName:   ownerName,
+		UploadedAt:  document.uploadedAt.UTC().Format(time.RFC3339),
+		CanDelete:   check_CanDeleteDocument(viewer.id, viewer.accessLevel, document.scope, document.ownerID),
 	}
 }
 
@@ -772,6 +902,8 @@ func build_AnswerReply() assistantReply {
 			Appendix:     "",
 			Quote:        texts.AnswerQuote,
 			OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.AnswerParagraph),
+			DocumentID:   texts.SeedInstructionID,
+			Scope:        texts.ScopeGlobal,
 		}},
 	}
 }

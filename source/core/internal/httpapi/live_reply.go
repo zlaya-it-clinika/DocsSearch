@@ -17,10 +17,13 @@ type chatTurn struct {
 
 func build_LiveAssistantReply(chatter interface {
 	Complete_Chat(messages []ollama.ChatMessage) (string, error)
-}, question string, history []chatTurn, chunks []livestore.SimilarChunk) (assistantReply, []shownDocument, error) {
-	kind, selected := livestore.Choose_LiveReplyKind(chunks)
+}, question string, history []chatTurn, visible []livestore.SimilarChunk, closed []livestore.SimilarChunk) (assistantReply, []shownDocument, error) {
+	kind, selected := livestore.Choose_LiveReplyKind(visible, closed)
 	if kind == texts.KindFallback {
 		return build_PlainReply(texts.KindFallback, texts.FallbackText), []shownDocument{}, nil
+	}
+	if kind == texts.KindAccessDenied {
+		return build_PlainReply(texts.KindAccessDenied, texts.AccessDeniedText), []shownDocument{}, nil
 	}
 	if chatter == nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
@@ -52,11 +55,14 @@ func build_LiveAssistantReply(chatter interface {
 			Appendix:     item.Appendix,
 			Quote:        item.Quote,
 			OriginalLink: item.OriginalLink,
+			DocumentID:   item.DocumentID,
+			Scope:        item.Scope,
 		})
 		documents = append(documents, shownDocument{
 			DocumentID: item.DocumentID,
 			Title:      item.Document,
 			Paragraph:  item.Paragraph,
+			Scope:      item.Scope,
 		})
 	}
 	return reply, documents, nil

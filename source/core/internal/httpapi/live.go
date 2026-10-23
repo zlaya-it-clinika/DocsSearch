@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
@@ -36,6 +36,7 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("GET /documents", api.serve_ListDocuments)
 	routeMux.HandleFunc("POST /documents", api.serve_UploadDocument)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", api.serve_DocumentFile)
+	routeMux.HandleFunc("DELETE /documents/{documentId}", api.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /users", api.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", api.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", api.serve_PatchUser)
@@ -205,13 +206,13 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			write_LiveError(responseWriter, embedError)
 			return
 		}
-		chunks, searchError := api.store.Find_ReplyChunks(request.Context(), embedding, account.AccessLevel)
+		visible, closed, searchError := api.store.Find_ReplyChunks(request.Context(), embedding, account.UserID, account.AccessLevel)
 		if searchError != nil {
 			write_LiveError(responseWriter, searchError)
 			return
 		}
 		var replyError error
-		reply, documents, replyError = build_LiveAssistantReply(api.chatter, body.Text, read_ChatHistory(historyRaw), chunks)
+		reply, documents, replyError = build_LiveAssistantReply(api.chatter, body.Text, read_ChatHistory(historyRaw), visible, closed)
 		if replyError != nil {
 			write_LiveError(responseWriter, replyError)
 			return
@@ -246,12 +247,22 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 }
 
 func (api *liveAPI) serve_ListDocuments(responseWriter http.ResponseWriter, request *http.Request) {
+	scopeFilter, scopeOK := read_ListScope(request.URL.Query().Get("scope"))
+	if !scopeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
 	token, found := read_BearerToken(request)
 	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	lines, err := api.store.List_VisibleDocuments(request.Context(), token)
+	account, err := api.store.Find_AccountByToken(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	lines, err := api.store.List_VisibleDocuments(request.Context(), token, scopeFilter)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
@@ -263,11 +274,22 @@ func (api *liveAPI) serve_ListDocuments(responseWriter http.ResponseWriter, requ
 			Title:       line.Title,
 			Edition:     line.Edition,
 			AccessLevel: line.AccessLevel,
+			Scope:       line.Scope,
+			OwnerID:     line.OwnerID,
+			OwnerName:   line.OwnerName,
+			UploadedAt:  line.UploadedAt.UTC().Format(time.RFC3339),
+			CanDelete:   check_CanDeleteDocument(account.UserID, account.AccessLevel, line.Scope, line.OwnerID),
 		})
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Documents []documentResponse `json:"documents"`
-	}{Documents: visible})
+		CanUploadGlobal   bool               `json:"canUploadGlobal"`
+		CanUploadPersonal bool               `json:"canUploadPersonal"`
+		Documents         []documentResponse `json:"documents"`
+	}{
+		CanUploadGlobal:   check_CanUploadGlobal(account.AccessLevel),
+		CanUploadPersonal: true,
+		Documents:         visible,
+	})
 }
 
 func (api *liveAPI) serve_UploadDocument(responseWriter http.ResponseWriter, request *http.Request) {
@@ -287,19 +309,36 @@ func (api *liveAPI) serve_UploadDocument(responseWriter http.ResponseWriter, req
 	if edition == "" {
 		edition = texts.EditionDefault
 	}
-	accessLevel := texts.SeedDocumentAccessOpen
-	if rawLevel := strings.TrimSpace(request.FormValue("accessLevel")); rawLevel != "" {
-		parsed, parseErr := strconv.Atoi(rawLevel)
-		if parseErr != nil {
-			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-			return
-		}
-		accessLevel = parsed
-	}
 	token, found := read_BearerToken(request)
 	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
+	}
+	account, err := api.store.Find_AccountByToken(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	scope, scopeOK := read_UploadScope(request.FormValue("scope"), account.AccessLevel)
+	if !scopeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	if scope == texts.ScopeGlobal && !check_CanUploadGlobal(account.AccessLevel) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	accessLevel := account.AccessLevel
+	ownerID := ""
+	if scope == texts.ScopePersonal {
+		ownerID = account.UserID
+	} else {
+		parsed, levelOK := read_AccessLevel(request.FormValue("accessLevel"), texts.SeedDocumentAccessOpen)
+		if !levelOK {
+			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+			return
+		}
+		accessLevel = parsed
 	}
 	cleanName := filepath.Base(fileName)
 	if cleanName == "" || cleanName == "." {
@@ -312,6 +351,8 @@ func (api *liveAPI) serve_UploadDocument(responseWriter http.ResponseWriter, req
 		Title:       title,
 		Edition:     edition,
 		AccessLevel: accessLevel,
+		Scope:       scope,
+		OwnerID:     ownerID,
 	})
 	if err != nil {
 		write_LiveError(responseWriter, err)
@@ -321,6 +362,7 @@ func (api *liveAPI) serve_UploadDocument(responseWriter http.ResponseWriter, req
 		DocumentID: result.DocumentID,
 		Status:     texts.StatusAccepted,
 		Edition:    result.Edition,
+		Scope:      result.Scope,
 	})
 }
 
@@ -339,6 +381,20 @@ func (api *liveAPI) serve_DocumentFile(responseWriter http.ResponseWriter, reque
 	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(file.FileName))
 	responseWriter.WriteHeader(http.StatusOK)
 	_, _ = responseWriter.Write(file.Body)
+}
+
+func (api *liveAPI) serve_DeleteDocument(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	err := api.store.Delete_Document(request.Context(), token, request.PathValue("documentId"))
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (api *liveAPI) serve_ListUsers(responseWriter http.ResponseWriter, request *http.Request) {
@@ -507,6 +563,8 @@ func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request
 					Appendix:     "",
 					Quote:        texts.DraftQuote,
 					OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.DraftParagraph),
+					DocumentID:   texts.SeedInstructionID,
+					Scope:        texts.ScopeGlobal,
 				},
 			},
 		},

@@ -55,6 +55,10 @@ type DocumentLine struct {
 	Title       string
 	Edition     string
 	AccessLevel int
+	Scope       string
+	OwnerID     string
+	OwnerName   string
+	UploadedAt  time.Time
 }
 
 type DocumentFile struct {
@@ -71,6 +75,7 @@ type SimilarChunk struct {
 	Paragraph  string
 	Appendix   string
 	Content    string
+	Scope      string
 	Distance   float64
 }
 
