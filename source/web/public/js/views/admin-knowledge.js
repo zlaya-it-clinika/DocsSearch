@@ -1,217 +1,108 @@
-// Вкладка «База знаний»: список документов, загрузка нового документа и новой редакции.
-import { build_DocumentFileUrl, list_Documents, upload_Document } from '../api.js';
-import { open_Modal } from '../components/modal.js';
-import { show_Toast } from '../components/toast.js';
-import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
-import { build_AcceptAttribute, format_AllowedExtensions, validate_UploadFile } from '../lib/files.js';
-import { format_FileSize } from '../lib/format.js';
-import { Roles, get_AccessLevelForRole, get_DocumentAudience, get_DocumentAudienceLabel } from '../roles.js';
-import { AdminTexts, AppTexts, DocumentsTexts, FileTexts, RoleTexts, format_Text, get_ErrorText } from '../texts.js';
+// Вкладка «База знаний»: общие документы компании и личные документы всех сотрудников.
+import { list_Documents } from '../api.js';
+import { open_DocumentUploadForm } from '../components/document-upload.js';
+import { create_DocumentTable } from '../components/document-table.js';
+import { Scopes, check_IsPersonal, filter_ByQuery, read_DocumentList, read_DocumentPermissions } from '../documents.js';
+import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
+import { AdminTexts, AppTexts, DocumentsTexts, get_ErrorText } from '../texts.js';
 
-function create_Field(id, label, control, hint = '', wide = false) {
-	return create_Element('div', { className: wide ? 'field field-wide' : 'field' }, [
-		create_Element('label', { className: 'field-label', text: label, attrs: { for: id } }),
-		control,
-		hint ? create_Element('span', { className: 'field-hint', text: hint }) : null,
-	]);
-}
-
-// document задан - загружаем новую редакцию с тем же названием
-function open_UploadForm({ config, document, onUploaded }) {
-	let selectedFile = null;
-	const isNewEdition = Boolean(document);
-
-	const errorBox = create_Element('div', { className: 'form-error', attrs: { role: 'alert' } });
-	errorBox.hidden = true;
-
-	const fileInput = create_Element('input', { attrs: { id: 'document-file', type: 'file', accept: build_AcceptAttribute(config), hidden: true } });
-	const dropName = create_Element('span', { className: 'file-drop-name' });
-	const dropZone = create_Element('div', {
-		className: 'file-drop',
-		attrs: { role: 'button', tabindex: 0, 'aria-label': AdminTexts.knowledgeDropLead },
-	}, [
-		create_Icon('upload', 'icon-lg'),
-		create_Element('span', { text: AdminTexts.knowledgeDropLead }),
-		create_Element('span', { className: 'field-hint', text: format_Text(FileTexts.allowedHint, { list: format_AllowedExtensions(config) }) }),
-		dropName,
-	]);
-
-	const titleInput = create_Element('input', { className: 'input', attrs: { id: 'document-title', autocomplete: 'off' } });
-	const editionInput = create_Element('input', { className: 'input', attrs: { id: 'document-edition', autocomplete: 'off' } });
-	const audienceSelect = create_Element('select', { className: 'select', attrs: { id: 'document-audience' } }, [
-		create_Element('option', { text: RoleTexts.documentForAll, attrs: { value: Roles.user } }),
-		create_Element('option', { text: RoleTexts.documentForAdmins, attrs: { value: Roles.admin } }),
-	]);
-	if (isNewEdition) {
-		titleInput.value = document.title;
-		titleInput.readOnly = true;
-		audienceSelect.value = get_DocumentAudience(document.accessLevel, config);
-	}
-
-	const select_File = (file) => {
-		if (!file) {
-			return;
-		}
-		const problem = validate_UploadFile(file, config);
-		if (problem) {
-			errorBox.textContent = problem;
-			errorBox.hidden = false;
-			return;
-		}
-		errorBox.hidden = true;
-		selectedFile = file;
-		dropName.textContent = `${file.name} · ${format_FileSize(file.size)}`;
-		if (!isNewEdition && titleInput.value.trim() === '') {
-			titleInput.value = file.name.replace(/\.[^.]+$/, '');
-		}
-	};
-
-	dropZone.addEventListener('click', () => fileInput.click());
-	dropZone.addEventListener('keydown', (event) => {
-		if (event.key === 'Enter' || event.key === ' ') {
-			event.preventDefault();
-			fileInput.click();
-		}
-	});
-	dropZone.addEventListener('dragover', (event) => {
-		event.preventDefault();
-		dropZone.classList.add('is-dragging');
-	});
-	dropZone.addEventListener('dragleave', () => dropZone.classList.remove('is-dragging'));
-	dropZone.addEventListener('drop', (event) => {
-		event.preventDefault();
-		dropZone.classList.remove('is-dragging');
-		select_File(event.dataTransfer.files[0]);
-	});
-	fileInput.addEventListener('change', () => select_File(fileInput.files[0]));
-
-	const form = create_Element('form', { className: 'form-grid', attrs: { id: 'document-form', novalidate: true } }, [
-		create_Element('div', { className: 'field field-wide' }, [
-			create_Element('span', { className: 'field-label', text: AdminTexts.knowledgeFieldFile }),
-			dropZone,
-			fileInput,
+function create_Notice(text, hint) {
+	return create_Element('div', { className: 'callout' }, [
+		create_Icon('info'),
+		create_Element('div', { className: 'callout-content' }, [
+			create_Element('div', { text }),
+			hint ? create_Element('div', { className: 'callout-hint', text: hint }) : null,
 		]),
-		create_Field('document-title', AdminTexts.knowledgeFieldTitle, titleInput, isNewEdition ? '' : AdminTexts.knowledgeFieldTitleHint, true),
-		create_Field('document-edition', AdminTexts.knowledgeFieldEdition, editionInput, AdminTexts.knowledgeFieldEditionHint),
-		create_Field('document-audience', AdminTexts.knowledgeFieldAccess, audienceSelect),
-		create_Element('div', { className: 'field-wide' }, [errorBox]),
 	]);
-	const submitButton = create_Button(AdminTexts.knowledgeUpload, { variant: 'primary', icon: 'upload', type: 'submit', attrs: { form: 'document-form' } });
-
-	const modal = open_Modal({
-		title: isNewEdition ? AdminTexts.knowledgeEditionTitle : AdminTexts.knowledgeUploadTitle,
-		body: [form],
-		footer: [create_Button(AppTexts.cancel, { variant: 'ghost', onClick: () => modal.close() }), submitButton],
-	});
-
-	form.addEventListener('submit', async (event) => {
-		event.preventDefault();
-		if (!selectedFile) {
-			errorBox.textContent = AdminTexts.knowledgeFileRequired;
-			errorBox.hidden = false;
-			dropZone.focus();
-			return;
-		}
-		errorBox.hidden = true;
-		submitButton.disabled = true;
-		try {
-			await upload_Document(selectedFile, {
-				title: titleInput.value,
-				edition: editionInput.value,
-				accessLevel: get_AccessLevelForRole(audienceSelect.value, config),
-			});
-			modal.close();
-			show_Toast(AdminTexts.knowledgeUploaded, 'success');
-			onUploaded();
-		} catch (error) {
-			errorBox.textContent = get_ErrorText(error);
-			errorBox.hidden = false;
-		} finally {
-			submitButton.disabled = false;
-		}
-	});
 }
 
-export function create_KnowledgeTab({ config }) {
+export function create_KnowledgeTab({ user, config }) {
 	let documents = [];
+	let permissions = read_DocumentPermissions(null, user, config);
+	let personalAvailable = false;
 	let query = '';
 
-	const countLabel = create_Element('span', { className: 'section-count' });
-	const content = create_Element('div', {}, [create_LoadingBlock(AppTexts.loading)]);
+	const globalCount = create_Element('span', { className: 'section-count' });
+	const personalCount = create_Element('span', { className: 'section-count' });
+	const globalContent = create_Element('div', {}, [create_LoadingBlock(AppTexts.loading)]);
+	const personalContent = create_Element('div', {}, [create_LoadingBlock(AppTexts.loading)]);
+	const uploadButton = create_Button(DocumentsTexts.uploadGlobal, {
+		variant: 'primary',
+		icon: 'upload',
+		onClick: () => open_DocumentUploadForm({ config, scope: Scopes.global, onUploaded: reload }),
+	});
 
-	const reload = async () => {
+	const render_Sections = () => {
+		const searchFields = ['title', 'ownerName', 'ownerId'];
+		const allGlobal = documents.filter((document) => !check_IsPersonal(document));
+		const allPersonal = documents.filter(check_IsPersonal);
+		const global = filter_ByQuery(allGlobal, query, searchFields);
+		const personal = filter_ByQuery(allPersonal, query, searchFields);
+		globalCount.textContent = String(allGlobal.length);
+		personalCount.textContent = personalAvailable ? String(allPersonal.length) : '';
+		uploadButton.hidden = !permissions.canUploadGlobal;
+
+		globalContent.replaceChildren(global.length === 0
+			? create_EmptyBlock('book', query ? DocumentsTexts.nothingFound : AdminTexts.knowledgeEmpty)
+			: create_DocumentTable(global, {
+				config,
+				columns: ['title', 'edition', 'access', 'uploaded'],
+				onNewEdition: permissions.canUploadGlobal
+					? (document) => open_DocumentUploadForm({ config, scope: Scopes.global, document, onUploaded: reload })
+					: null,
+				onChanged: reload,
+			}));
+
+		if (!personalAvailable) {
+			personalContent.replaceChildren(create_Notice(DocumentsTexts.personalNotSupported, DocumentsTexts.personalNotSupportedHint));
+			return;
+		}
+		personalContent.replaceChildren(personal.length === 0
+			? create_EmptyBlock('users', query ? DocumentsTexts.nothingFound : AdminTexts.knowledgePersonalEmpty)
+			: create_DocumentTable(personal, {
+				config,
+				columns: ['title', 'owner', 'edition', 'uploaded'],
+				onChanged: reload,
+			}));
+	};
+
+	async function reload() {
 		try {
-			const payload = await list_Documents();
-			documents = Array.isArray(payload?.documents) ? payload.documents : [];
-			render_Table();
+			// scope=all отдаёт и личные документы всех сотрудников. Старое ядро параметр не знает и вернёт общий список
+			const payload = await list_Documents(Scopes.all);
+			documents = read_DocumentList(payload);
+			permissions = read_DocumentPermissions(payload, user, config);
+			personalAvailable = permissions.supportsScopes;
+			render_Sections();
 		} catch (error) {
-			content.replaceChildren(create_EmptyBlock('alert', AdminTexts.knowledgeLoadFailed, [
+			globalContent.replaceChildren(create_EmptyBlock('alert', AdminTexts.knowledgeLoadFailed, [
 				create_Element('div', { className: 'callout-hint', text: get_ErrorText(error) }),
 				create_Button(AppTexts.retry, { variant: 'outline', icon: 'refresh', onClick: reload }),
 			]));
+			personalContent.replaceChildren();
 		}
-	};
-
-	function render_Table() {
-		countLabel.textContent = String(documents.length);
-		const filtered = query ? documents.filter((document) => document.title.toLowerCase().includes(query)) : documents;
-		if (filtered.length === 0) {
-			content.replaceChildren(create_EmptyBlock('book', AdminTexts.knowledgeEmpty));
-			return;
-		}
-		content.replaceChildren(create_Element('div', { className: 'table-wrap' }, [
-			create_Element('table', { className: 'table' }, [
-				create_Element('thead', {}, [create_Element('tr', {}, [
-					create_Element('th', { text: AdminTexts.knowledgeColumnTitle }),
-					create_Element('th', { text: AdminTexts.knowledgeColumnEdition }),
-					create_Element('th', { text: AdminTexts.knowledgeColumnAccess }),
-					create_Element('th', { className: 'table-cell-actions' }),
-				])]),
-				create_Element('tbody', {}, filtered.map((document) => create_Element('tr', {}, [
-					create_Element('td', { className: 'table-cell-wrap' }, [
-						create_Element('div', { className: 'cell-title', text: document.title }),
-						create_Element('div', { className: 'cell-subtitle', text: document.documentId }),
-					]),
-					create_Element('td', { className: 'table-cell-muted', text: document.edition }),
-					create_Element('td', {}, [create_Element('span', {
-						className: get_DocumentAudience(document.accessLevel, config) === Roles.admin ? 'badge badge-strong' : 'badge',
-						text: get_DocumentAudienceLabel(document.accessLevel, config),
-					})]),
-					create_Element('td', { className: 'table-cell-actions' }, [
-						create_IconButton('upload', `${AdminTexts.knowledgeNewEdition}: ${document.title}`, () => open_UploadForm({ config, document, onUploaded: reload })),
-						create_Element('a', {
-							className: 'icon-button',
-							attrs: {
-								href: build_DocumentFileUrl(document.documentId),
-								target: '_blank',
-								rel: 'noopener',
-								title: DocumentsTexts.openFile,
-								'aria-label': `${DocumentsTexts.openFile}: ${document.title}`,
-							},
-						}, [create_Icon('download')]),
-					]),
-				]))),
-			]),
-		]));
 	}
 
-	const element = create_Element('section', { className: 'page-section' }, [
-		create_Element('div', { className: 'section-header' }, [
-			create_Element('h2', { className: 'section-title' }, [AdminTexts.tabKnowledge, countLabel]),
-			create_Element('div', { className: 'section-tools' }, [
-				create_SearchBox(AdminTexts.knowledgeSearch, (value) => {
-					query = value;
-					render_Table();
-				}),
-				create_Button(AdminTexts.knowledgeUpload, {
-					variant: 'primary',
-					icon: 'upload',
-					onClick: () => open_UploadForm({ config, document: null, onUploaded: reload }),
-				}),
+	const element = create_Element('div', { className: 'page-sections' }, [
+		create_SearchBox(AdminTexts.knowledgeSearch, (value) => {
+			query = value;
+			render_Sections();
+		}),
+		create_Element('section', { className: 'page-section' }, [
+			create_Element('div', { className: 'section-header' }, [
+				create_Element('h2', { className: 'section-title' }, [DocumentsTexts.globalTitle, globalCount]),
+				create_Element('div', { className: 'section-tools' }, [uploadButton]),
 			]),
+			create_Element('p', { className: 'section-lead', text: AdminTexts.knowledgeLead }),
+			globalContent,
 		]),
-		create_Element('p', { className: 'section-lead', text: AdminTexts.knowledgeLead }),
-		content,
+		create_Element('section', { className: 'page-section' }, [
+			create_Element('div', { className: 'section-header' }, [
+				create_Element('h2', { className: 'section-title' }, [AdminTexts.knowledgePersonalTitle, personalCount]),
+			]),
+			create_Element('p', { className: 'section-lead', text: AdminTexts.knowledgePersonalLead }),
+			personalContent,
+		]),
 	]);
 
 	reload();

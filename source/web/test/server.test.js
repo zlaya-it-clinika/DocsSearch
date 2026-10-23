@@ -50,6 +50,11 @@ function start_TestCore() {
 				send(200, { sessionId: 'session-1' });
 				return;
 			}
+			if (request.url === '/documents/doc-1' && request.method === 'DELETE') {
+				response.writeHead(204);
+				response.end();
+				return;
+			}
 			if (request.url === '/drafts/check') {
 				send(200, { recommendations: [], receivedBytes: body.length });
 				return;
@@ -145,6 +150,22 @@ test('запись без CSRF-токена отклоняется, с токе�
 	const accepted = await fetch(`${webUrl}/api/sessions`, { method: 'POST', headers: { cookie, 'X-CSRF-Token': payload.csrfToken } });
 	assert.equal(accepted.status, 200);
 	assert.equal((await accepted.json()).sessionId, 'session-1');
+});
+
+test('удаление документа идёт через прокси только с CSRF-токеном', async () => {
+	const { cookie, payload } = await login_AsTestUser();
+	const rejected = await fetch(`${webUrl}/api/documents/doc-1`, { method: 'DELETE', headers: { cookie } });
+	assert.equal(rejected.status, 403);
+	const accepted = await fetch(`${webUrl}/api/documents/doc-1`, { method: 'DELETE', headers: { cookie, 'X-CSRF-Token': payload.csrfToken } });
+	assert.equal(accepted.status, 204);
+	assert.equal(coreRequests.at(-1).method, 'DELETE');
+	assert.equal(coreRequests.at(-1).url, '/documents/doc-1');
+});
+
+test('параметры списка документов доходят до ядра', async () => {
+	const { cookie } = await login_AsTestUser();
+	await fetch(`${webUrl}/api/documents?scope=all`, { headers: { cookie } });
+	assert.equal(coreRequests.at(-1).url, '/documents?scope=all');
 });
 
 test('запрос с чужого origin отклоняется', async () => {

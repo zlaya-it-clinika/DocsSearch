@@ -1,7 +1,8 @@
 // Источники ответа: чипы под сообщением и окно с подробностями, как в open-webui.
 import { build_OriginalUrl } from '../api.js';
+import { check_IsPersonal } from '../documents.js';
 import { create_Element, create_Icon } from '../lib/dom.js';
-import { AppTexts, ChatTexts, CitationTexts } from '../texts.js';
+import { AppTexts, ChatTexts, CitationTexts, DocumentsTexts } from '../texts.js';
 import { open_Modal } from './modal.js';
 
 function check_HasValue(value) {
@@ -50,6 +51,7 @@ export function create_CitationChip(citation, index, relevancePercent) {
 	}, [
 		create_Element('span', { className: 'chip-index', text: index + 1 }),
 		create_Element('span', { className: 'chip-text', text: label }),
+		check_IsPersonal(citation) ? create_Element('span', { className: 'chip-tag', text: DocumentsTexts.scopePersonal }) : null,
 	]);
 }
 
@@ -70,6 +72,7 @@ function create_DetailRow(label, value) {
 export function open_CitationModal(citation, relevancePercent) {
 	const details = create_Element('dl', { className: 'citation-details' }, [
 		...create_DetailRow(CitationTexts.document, citation.document),
+		...create_DetailRow(CitationTexts.scope, check_IsPersonal(citation) ? DocumentsTexts.scopePersonal : DocumentsTexts.scopeGlobal),
 		...create_DetailRow(CitationTexts.edition, citation.edition),
 		...create_DetailRow(CitationTexts.section, citation.section),
 		...create_DetailRow(CitationTexts.paragraph, citation.paragraph),

@@ -2,7 +2,8 @@
 import { fetch_AuditLog } from '../api.js';
 import { create_Button, create_Element, create_EmptyBlock, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
 import { format_DateTime } from '../lib/format.js';
-import { AdminTexts, AppTexts, CitationTexts, get_ErrorText } from '../texts.js';
+import { check_IsPersonal } from '../documents.js';
+import { AdminTexts, AppTexts, CitationTexts, DocumentsTexts, get_ErrorText } from '../texts.js';
 
 function render_ShownDocuments(documents) {
 	if (!Array.isArray(documents) || documents.length === 0) {
@@ -10,7 +11,10 @@ function render_ShownDocuments(documents) {
 	}
 	return create_Element('div', { className: 'chip-list' }, documents.map((document) => {
 		const label = document.paragraph ? `${document.title}, ${CitationTexts.shortParagraph} ${document.paragraph}` : document.title;
-		return create_Element('span', { className: 'chip', attrs: { title: label } }, [create_Element('span', { className: 'chip-text', text: label })]);
+		return create_Element('span', { className: 'chip', attrs: { title: label } }, [
+			create_Element('span', { className: 'chip-text', text: label }),
+			check_IsPersonal(document) ? create_Element('span', { className: 'chip-tag', text: DocumentsTexts.scopePersonal }) : null,
+		]);
 	}));
 }
 

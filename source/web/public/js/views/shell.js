@@ -7,7 +7,7 @@ import { navigate_To } from '../router.js';
 import { SidebarTexts } from '../texts.js';
 import { create_AdminView } from './admin.js';
 import { create_ChatView } from './chat.js';
-import { open_DocumentsModal } from './documents-modal.js';
+import { create_DocumentsPage } from './documents-page.js';
 
 const narrowScreenQuery = window.matchMedia('(max-width: 800px)');
 
@@ -36,17 +36,19 @@ export function create_Shell({ root, user, config, onLogout }) {
 		user,
 		config,
 		history,
-		onNewChat: close_MobileSidebar,
+		onNavigate: close_MobileSidebar,
 		onLogout,
 		onToggle: toggle_Sidebar,
-		onOpenDocuments: () => open_DocumentsModal(config),
 	});
 
 	const topbar = create_Element('header', { className: 'topbar' }, [
 		create_IconButton('sidebar', SidebarTexts.expand, toggle_Sidebar, 'icon-button topbar-sidebar-toggle'),
 		topbarTitle,
 		create_Element('div', { className: 'topbar-actions' }, [
-			create_IconButton('book', SidebarTexts.documents, () => open_DocumentsModal(config)),
+			create_Element('a', {
+				className: 'icon-button',
+				attrs: { href: '/documents', 'data-link': true, title: SidebarTexts.documents, 'aria-label': SidebarTexts.documents },
+			}, [create_Icon('book')]),
 			create_Element('a', {
 				className: 'icon-button',
 				attrs: { href: '/', 'data-link': true, title: SidebarTexts.newChat, 'aria-label': SidebarTexts.newChat },
@@ -86,6 +88,7 @@ export function create_Shell({ root, user, config, onLogout }) {
 			}
 			currentChatId = sessionId;
 			sidebar.set_ActiveChat(sessionId);
+			sidebar.set_ActiveSection('chat');
 			update_Title();
 			const view = create_ChatView({
 				sessionId,
@@ -103,9 +106,18 @@ export function create_Shell({ root, user, config, onLogout }) {
 			view.focus();
 		},
 
+		show_Documents() {
+			currentChatId = null;
+			sidebar.set_ActiveChat(null);
+			sidebar.set_ActiveSection('documents');
+			topbarTitle.textContent = '';
+			mount_View(create_DocumentsPage({ user, config }));
+		},
+
 		show_Admin(tab) {
 			currentChatId = null;
 			sidebar.set_ActiveChat(null);
+			sidebar.set_ActiveSection('admin');
 			topbarTitle.textContent = '';
 			mount_View(create_AdminView({ tab, user, config }));
 		},

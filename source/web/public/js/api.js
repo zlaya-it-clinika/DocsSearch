@@ -122,11 +122,17 @@ export function send_ChatMessage(sessionId, text) {
 
 // Документы
 
-export function list_Documents() {
-	return request_Api('GET', '/documents');
+// scope: global, personal или all (all - только администратор). Без параметра - всё, что видит пользователь
+export function list_Documents(scope = '') {
+	const query = scope ? `?scope=${encodeURIComponent(scope)}` : '';
+	return request_Api('GET', `/documents${query}`);
 }
 
-// fields: title, edition, accessLevel - необязательные
+export function delete_Document(documentId) {
+	return request_Api('DELETE', `/documents/${encode_Segment(documentId)}`);
+}
+
+// fields: title, edition, scope, accessLevel - необязательные
 export function upload_Document(file, fields = {}) {
 	const formData = new FormData();
 	formData.append('file', file);

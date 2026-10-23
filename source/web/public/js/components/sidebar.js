@@ -43,8 +43,8 @@ function create_ThemeSwitch(closeMenu) {
 		}, [create_Icon(option.icon, 'icon-sm'), create_Element('span', { text: option.label })])));
 }
 
-// onNewChat, onLogout, onToggle (свернуть), onOpenDocuments
-export function create_Sidebar({ user, config, history, onNewChat, onLogout, onToggle, onOpenDocuments }) {
+// onNavigate вызывается при переходе по пунктам панели (на телефоне закрывает её), onLogout, onToggle - свернуть
+export function create_Sidebar({ user, config, history, onNavigate, onLogout, onToggle }) {
 	let query = '';
 	let activeSessionId = null;
 	let currentUser = user;
@@ -98,10 +98,6 @@ export function create_Sidebar({ user, config, history, onNewChat, onLogout, onT
 			create_Element('div', { className: 'menu-label', text: SidebarTexts.themeLabel }),
 			create_ThemeSwitch(close),
 			create_Element('div', { className: 'menu-separator' }),
-			create_MenuItem(create_Icon('book'), SidebarTexts.documents, () => {
-				close();
-				onOpenDocuments();
-			}),
 			check_IsAdmin(currentUser, config)
 				? create_MenuItem(create_Icon('shield'), SidebarTexts.adminPanel, close, { href: '/admin/users', dataLink: true })
 				: null,
@@ -116,8 +112,13 @@ export function create_Sidebar({ user, config, history, onNewChat, onLogout, onT
 	const newChatLink = create_Element('a', {
 		className: 'sidebar-nav-button',
 		attrs: { href: '/', 'data-link': true },
-		on: { click: () => onNewChat?.() },
+		on: { click: () => onNavigate?.() },
 	}, [create_Icon('new-chat'), create_Element('span', { text: SidebarTexts.newChat })]);
+	const documentsLink = create_Element('a', {
+		className: 'sidebar-nav-button',
+		attrs: { href: '/documents', 'data-link': true },
+		on: { click: () => onNavigate?.() },
+	}, [create_Icon('book'), create_Element('span', { text: SidebarTexts.documents })]);
 
 	const element = create_Element('aside', { className: 'sidebar', attrs: { 'aria-label': AppTexts.productName } }, [
 		create_Element('div', { className: 'sidebar-header' }, [
@@ -129,6 +130,7 @@ export function create_Sidebar({ user, config, history, onNewChat, onLogout, onT
 		]),
 		create_Element('div', { className: 'sidebar-actions' }, [
 			newChatLink,
+			documentsLink,
 			create_SearchBox(SidebarTexts.searchPlaceholder, (value) => {
 				query = value;
 				render_List();
@@ -147,6 +149,15 @@ export function create_Sidebar({ user, config, history, onNewChat, onLogout, onT
 		set_ActiveChat(sessionId) {
 			activeSessionId = sessionId;
 			render_List();
+		},
+		// section: documents - подсветить пункт «Документы»
+		set_ActiveSection(section) {
+			documentsLink.classList.toggle('is-active', section === 'documents');
+			if (section === 'documents') {
+				documentsLink.setAttribute('aria-current', 'page');
+			} else {
+				documentsLink.removeAttribute('aria-current');
+			}
 		},
 		update_User(nextUser) {
 			currentUser = nextUser;

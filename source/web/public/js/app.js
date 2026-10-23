@@ -120,6 +120,7 @@ async function boot() {
 
 	define_Route('/login', show_Login);
 	define_Route('/', require_User(() => ensure_Shell().show_Chat(null)));
+	define_Route('/documents', require_User(() => ensure_Shell().show_Documents()));
 	define_Route('/c/:sessionId', require_User(({ sessionId }) => ensure_Shell().show_Chat(sessionId)));
 	define_Route('/admin', require_User(() => navigate_To('/admin/users', { replace: true })));
 	define_Route('/admin/:tab', require_User(({ tab }) => show_Admin(tab)));
