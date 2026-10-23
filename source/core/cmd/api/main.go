@@ -9,12 +9,12 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
-	if cfg.Debug {
-		log.Printf("listen :%s mode %s ollama_configured %t", cfg.Port, cfg.Mode, cfg.OllamaURL != "")
+	loadedConfig := config.Load()
+	if loadedConfig.Debug {
+		log.Printf("listen :%s mode %s ollama_configured %t", loadedConfig.Port, loadedConfig.Mode, loadedConfig.OllamaURL != "")
 	}
-	err := http.ListenAndServe(":"+cfg.Port, httpapi.NewHandler(cfg))
-	if err != nil {
-		log.Fatal(err)
+	listenError := http.ListenAndServe(":"+loadedConfig.Port, httpapi.NewHandler(loadedConfig))
+	if listenError != nil {
+		log.Fatal(listenError)
 	}
 }

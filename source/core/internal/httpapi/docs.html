@@ -4,7 +4,7 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Вход в документацию API</title>
+	<title>{{.Title}}</title>
 	<style>
 		:root {
 			--ink: #1b1914;
@@ -55,18 +55,18 @@
 <body>
 	{{if .PasswordSet}}
 	<form method="post" action="/docs/login">
-		<h1>Документация API</h1>
-		<p>Страница с запросами к локальному ядру. Пароль берется из DOCS_PASSWORD.</p>
+		<h1>{{.Heading}}</h1>
+		<p>{{.Lead}}</p>
 		{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-		<label for="password">Пароль</label>
+		<label for="password">{{.PasswordLabel}}</label>
 		<input id="password" name="password" type="password" autocomplete="current-password" required>
-		<button type="submit">Войти</button>
+		<button type="submit">{{.Submit}}</button>
 	</form>
 	{{else}}
 	<section class="notice">
-		<h1>Документация API</h1>
+		<h1>{{.Heading}}</h1>
 		<p class="error">{{.Error}}</p>
-		<p>Добавьте пароль в .env рядом с сервером и перезапустите его.</p>
+		<p>{{.MissingHint}}</p>
 	</section>
 	{{end}}
 </body>
@@ -79,7 +79,7 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>DocsSearch API</title>
+	<title>{{.Title}}</title>
 	<style>
 		:root {
 			--ink: #1b1914;
@@ -164,80 +164,75 @@
 		.result:empty { display: none; }
 	</style>
 </head>
-<body>
+<body data-file-prefix="{{.FilePrefix}}" data-file-suffix="{{.FileSuffix}}">
 	<header>
 		<div>
-			<h1>DocsSearch API</h1>
-			<p>Запросы уходят на этот же сервер. В заглушке: user / user и admin / admin.</p>
+			<h1>{{.Title}}</h1>
+			<p>{{.Lead}}</p>
 		</div>
 		<form method="post" action="/docs/logout">
-			<button type="submit">Выйти</button>
+			<button type="submit">{{.Logout}}</button>
 		</form>
 	</header>
 	<main>
 		<section class="token">
-			<label for="api-token">Токен API, заголовок Authorization</label>
-			<input id="api-token" autocomplete="off" placeholder="Появится после POST /auth/login">
+			<label for="api-token">{{.TokenLabel}}</label>
+			<input id="api-token" autocomplete="off" placeholder="{{.TokenPlaceholder}}">
 		</section>
 
 		<form class="call" data-method="POST" data-auth="no" data-capture="token">
 			<h2><span class="method post">POST</span>/auth/login</h2>
-			<p class="hint">Вход сотрудника. Токен из ответа подставится в поле выше.</p>
+			<p class="hint">{{.HintLogin}}</p>
 			<input name="path" value="/auth/login">
-			<textarea name="body" rows="4">{
-  "login": "user",
-  "password": "user"
-}</textarea>
-			<button type="submit">Отправить</button>
+			<textarea name="body" rows="4">{{.ExampleLoginBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/me</h2>
-			<p class="hint">Текущий пользователь без токена в теле ответа.</p>
+			<p class="hint">{{.HintMe}}</p>
 			<input name="path" value="/me">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="POST" data-capture="session">
 			<h2><span class="method post">POST</span>/sessions</h2>
-			<p class="hint">Новая сессия. Ее id подставится в запросы истории и сообщений.</p>
+			<p class="hint">{{.HintCreateSession}}</p>
 			<input name="path" value="/sessions">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/sessions/{sessionId}</h2>
-			<p class="hint">История сессии.</p>
+			<p class="hint">{{.HintHistory}}</p>
 			<input name="path" value="/sessions/session-1" data-session-template="/sessions/{id}">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="POST">
 			<h2><span class="method post">POST</span>/sessions/{sessionId}/messages</h2>
-			<p class="hint">Фразы заглушки: нет доступа, не найдено, уточни, шаблон. Иначе обычный ответ.</p>
+			<p class="hint">{{.HintMessage}}</p>
 			<input name="path" value="/sessions/session-1/messages" data-session-template="/sessions/{id}/messages">
-			<textarea name="body" rows="3">{
-  "text": "Как зарегистрировать входящий документ?"
-}</textarea>
-			<button type="submit">Отправить</button>
+			<textarea name="body" rows="3">{{.ExampleMessageBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/documents</h2>
-			<p class="hint">Только документы не выше уровня пользователя.</p>
+			<p class="hint">{{.HintListDocuments}}</p>
 			<input name="path" value="/documents">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="POST" data-upload="file">
 			<h2><span class="method post">POST</span>/documents</h2>
-			<p class="hint">Загрузка в базу. Файл в заглушке не индексируется, но появляется в списке.</p>
+			<p class="hint">{{.HintUpload}}</p>
 			<input name="path" value="/documents">
 			<div class="fields">
 				<input type="file" name="file">
@@ -245,68 +240,60 @@
 				<input data-field name="edition" placeholder="edition" value="1.0">
 				<input data-field name="accessLevel" placeholder="accessLevel" value="1">
 			</div>
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/documents/{documentId}/file</h2>
-			<p class="hint">Файл оригинала. doc-2 закрыт для user.</p>
+			<p class="hint">{{.HintFile}}</p>
 			<input name="path" value="/documents/doc-1/file">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/users</h2>
-			<p class="hint">Список учетных записей. Нужен уровень 2.</p>
+			<p class="hint">{{.HintUsers}}</p>
 			<input name="path" value="/users">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="POST">
 			<h2><span class="method post">POST</span>/users</h2>
-			<p class="hint">Создание учетной записи. Нужен уровень 2.</p>
+			<p class="hint">{{.HintCreateUser}}</p>
 			<input name="path" value="/users">
-			<textarea name="body" rows="6">{
-  "login": "clerk",
-  "password": "clerk",
-  "displayName": "Делопроизводитель",
-  "accessLevel": 1
-}</textarea>
-			<button type="submit">Отправить</button>
+			<textarea name="body" rows="6">{{.ExampleCreateUserBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="PATCH">
 			<h2><span class="method patch">PATCH</span>/users/{userId}</h2>
-			<p class="hint">Смена имени и уровня. Нужен уровень 2.</p>
+			<p class="hint">{{.HintPatchUser}}</p>
 			<input name="path" value="/users/user-1">
-			<textarea name="body" rows="4">{
-  "displayName": "Сотрудник архива",
-  "accessLevel": 1
-}</textarea>
-			<button type="submit">Отправить</button>
+			<textarea name="body" rows="4">{{.ExamplePatchUserBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/audit</h2>
-			<p class="hint">Журнал вопросов. Нужен уровень 2.</p>
+			<p class="hint">{{.HintAudit}}</p>
 			<input name="path" value="/audit">
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 
 		<form class="call" data-method="POST" data-upload="file">
 			<h2><span class="method post">POST</span>/drafts/check</h2>
-			<p class="hint">Проверка черновика. В заглушке одна фиксированная рекомендация.</p>
+			<p class="hint">{{.HintDraft}}</p>
 			<input name="path" value="/drafts/check">
 			<div class="fields">
 				<input type="file" name="file">
 			</div>
-			<button type="submit">Отправить</button>
+			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
 	</main>
@@ -365,7 +352,7 @@
 				return { text: await response.text() }
 			}
 			const blob = await response.blob()
-			return { text: "Файл, " + blob.size + " байт" }
+			return { text: document.body.dataset.filePrefix + blob.size + document.body.dataset.fileSuffix }
 		}
 
 		function rememberToken(text) {

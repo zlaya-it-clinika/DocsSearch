@@ -143,8 +143,8 @@ type stub struct {
 	nextAudit     int
 }
 
-func newStub() *stub {
-	store := &stub{
+func create_StubStore() *stub {
+	stubStore := &stub{
 		usersByID:     map[string]*userRecord{},
 		usersByLogin:  map[string]*userRecord{},
 		tokens:        map[string]string{},
@@ -155,14 +155,14 @@ func newStub() *stub {
 		nextSession:   1,
 		nextAudit:     1,
 	}
-	store.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
-	store.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
-	store.addDocument(texts.SeedInstructionID, texts.SeedInstructionTitle, texts.EditionDefault, texts.SeedDocumentAccessOpen, texts.SeedInstructionFileName, texts.PlainTextContentType, []byte(texts.SeedInstructionBody))
-	store.addDocument(texts.SeedRestrictedID, texts.SeedRestrictedTitle, texts.EditionDefault, texts.SeedDocumentAccessClosed, texts.SeedRestrictedFileName, texts.PlainTextContentType, []byte(texts.SeedRestrictedBody))
-	return store
+	stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
+	stubStore.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
+	stubStore.addDocument(texts.SeedInstructionID, texts.SeedInstructionTitle, texts.EditionDefault, texts.SeedDocumentAccessOpen, texts.SeedInstructionFileName, texts.PlainTextContentType, []byte(texts.SeedInstructionBody))
+	stubStore.addDocument(texts.SeedRestrictedID, texts.SeedRestrictedTitle, texts.EditionDefault, texts.SeedDocumentAccessClosed, texts.SeedRestrictedFileName, texts.PlainTextContentType, []byte(texts.SeedRestrictedBody))
+	return stubStore
 }
 
-func (store *stub) addUser(id, login, password, displayName string, accessLevel int) {
+func (stubStore *stub) addUser(id, login, password, displayName string, accessLevel int) {
 	record := &userRecord{
 		id:          id,
 		login:       login,
@@ -170,12 +170,12 @@ func (store *stub) addUser(id, login, password, displayName string, accessLevel 
 		displayName: displayName,
 		accessLevel: accessLevel,
 	}
-	store.users = append(store.users, record)
-	store.usersByID[id] = record
-	store.usersByLogin[login] = record
+	stubStore.users = append(stubStore.users, record)
+	stubStore.usersByID[id] = record
+	stubStore.usersByLogin[login] = record
 }
 
-func (store *stub) addDocument(id, title, edition string, accessLevel int, fileName, contentType string, body []byte) {
+func (stubStore *stub) addDocument(id, title, edition string, accessLevel int, fileName, contentType string, body []byte) {
 	record := &documentRecord{
 		id:          id,
 		title:       title,
@@ -185,51 +185,51 @@ func (store *stub) addDocument(id, title, edition string, accessLevel int, fileN
 		contentType: contentType,
 		body:        body,
 	}
-	store.documents = append(store.documents, record)
-	store.documentsByID[id] = record
+	stubStore.documents = append(stubStore.documents, record)
+	stubStore.documentsByID[id] = record
 }
 
-func (store *stub) routes() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /auth/login", store.serveLogin)
-	mux.HandleFunc("GET /me", store.serveMe)
-	mux.HandleFunc("POST /sessions", store.serveCreateSession)
-	mux.HandleFunc("GET /sessions/{sessionId}", store.serveSessionHistory)
-	mux.HandleFunc("POST /sessions/{sessionId}/messages", store.serveSessionMessage)
-	mux.HandleFunc("GET /documents", store.serveListDocuments)
-	mux.HandleFunc("POST /documents", store.serveUploadDocument)
-	mux.HandleFunc("GET /documents/{documentId}/file", store.serveDocumentFile)
-	mux.HandleFunc("GET /users", store.serveListUsers)
-	mux.HandleFunc("POST /users", store.serveCreateUser)
-	mux.HandleFunc("PATCH /users/{userId}", store.servePatchUser)
-	mux.HandleFunc("GET /audit", store.serveAudit)
-	mux.HandleFunc("POST /drafts/check", store.serveDraftCheck)
-	return mux
+func (stubStore *stub) register_StubRoutes() *http.ServeMux {
+	routeMux := http.NewServeMux()
+	routeMux.HandleFunc("POST /auth/login", stubStore.serve_Login)
+	routeMux.HandleFunc("GET /me", stubStore.serve_CurrentUser)
+	routeMux.HandleFunc("POST /sessions", stubStore.serve_CreateSession)
+	routeMux.HandleFunc("GET /sessions/{sessionId}", stubStore.serve_SessionHistory)
+	routeMux.HandleFunc("POST /sessions/{sessionId}/messages", stubStore.serve_SessionMessage)
+	routeMux.HandleFunc("GET /documents", stubStore.serve_ListDocuments)
+	routeMux.HandleFunc("POST /documents", stubStore.serve_UploadDocument)
+	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
+	routeMux.HandleFunc("GET /users", stubStore.serve_ListUsers)
+	routeMux.HandleFunc("POST /users", stubStore.serve_CreateUser)
+	routeMux.HandleFunc("PATCH /users/{userId}", stubStore.serve_PatchUser)
+	routeMux.HandleFunc("GET /audit", stubStore.serve_Audit)
+	routeMux.HandleFunc("POST /drafts/check", stubStore.serve_DraftCheck)
+	return routeMux
 }
 
-func (store *stub) serveLogin(w http.ResponseWriter, r *http.Request) {
+func (stubStore *stub) serve_Login(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Login    string `json:"login"`
 		Password string `json:"password"`
 	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	record := store.usersByLogin[body.Login]
-	if record == nil || !passwordMatches(record.password, body.Password) {
-		writeError(w, http.StatusUnauthorized, texts.ErrorInvalidCredentials)
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record := stubStore.usersByLogin[body.Login]
+	if record == nil || !match_Password(record.password, body.Password) {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorInvalidCredentials)
 		return
 	}
-	token, err := newToken()
+	token, err := create_RandomToken()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, texts.ErrorInvalidBody)
+		write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorInvalidBody)
 		return
 	}
-	store.tokens[token] = record.id
-	writeJSON(w, http.StatusOK, loginResponse{
+	stubStore.tokens[token] = record.id
+	write_JSONResponse(responseWriter, http.StatusOK, loginResponse{
 		Token:       token,
 		UserID:      record.id,
 		DisplayName: record.displayName,
@@ -237,139 +237,140 @@ func (store *stub) serveLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (store *stub) serveMe(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) serve_CurrentUser(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, profileResponse{
+	write_JSONResponse(responseWriter, http.StatusOK, profileResponse{
 		UserID:      record.id,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
 	})
 }
 
-func (store *stub) serveCreateSession(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) serve_CreateSession(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	sessionID := "session-" + strconv.Itoa(store.nextSession)
-	store.nextSession++
-	store.sessions[sessionID] = &sessionRecord{
+	sessionID := "session-" + strconv.Itoa(stubStore.nextSession)
+	stubStore.nextSession++
+	stubStore.sessions[sessionID] = &sessionRecord{
 		id:       sessionID,
 		ownerID:  record.id,
 		messages: []any{},
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
 	}{SessionID: sessionID})
 }
 
-func (store *stub) serveSessionHistory(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	session, ok := store.ownedSession(w, r)
-	if !ok {
+func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	session, found := stubStore.find_OwnedSession(responseWriter, request)
+	if !found {
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
 		Messages  []any  `json:"messages"`
 	}{SessionID: session.id, Messages: session.messages})
 }
 
-func (store *stub) serveSessionMessage(w http.ResponseWriter, r *http.Request) {
+func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Text string `json:"text"`
 	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	if strings.TrimSpace(body.Text) == "" {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	session, ok := store.ownedSession(w, r)
-	if !ok {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	session, found := stubStore.find_OwnedSession(responseWriter, request)
+	if !found {
 		return
 	}
-	record := store.usersByID[session.ownerID]
-	reply := replyFor(session, body.Text)
+	record := stubStore.usersByID[session.ownerID]
+	reply := build_AssistantReply(session, body.Text)
 	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text})
 	stored := reply
 	stored.Role = "assistant"
 	session.messages = append(session.messages, stored)
-	store.appendAudit(record, body.Text, reply.Kind)
-	writeJSON(w, http.StatusOK, reply)
+	stubStore.append_AuditEntry(record, body.Text, reply.Kind)
+	write_JSONResponse(responseWriter, http.StatusOK, reply)
 }
 
-func (store *stub) serveListDocuments(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) serve_ListDocuments(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
 	visible := make([]documentResponse, 0)
-	for _, document := range store.documents {
+	for _, document := range stubStore.documents {
 		if record.accessLevel < document.accessLevel {
 			continue
 		}
 		visible = append(visible, document.public())
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		Documents []documentResponse `json:"documents"`
 	}{Documents: visible})
 }
 
-func (store *stub) serveUploadDocument(w http.ResponseWriter, r *http.Request) {
-	fileName, body, contentType, err := readUpload(w, r)
+func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, request *http.Request) {
+	fileName, body, contentType, err := read_UploadedFile(responseWriter, request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	title := strings.TrimSpace(r.FormValue("title"))
+	title := strings.TrimSpace(request.FormValue("title"))
 	if title == "" {
 		title = strings.TrimSpace(fileName)
 	}
 	if title == "" {
 		title = texts.DefaultDocumentTitle
 	}
-	edition := strings.TrimSpace(r.FormValue("edition"))
+	edition := strings.TrimSpace(request.FormValue("edition"))
 	if edition == "" {
 		edition = texts.EditionDefault
 	}
 	accessLevel := texts.SeedDocumentAccessOpen
-	if rawLevel := strings.TrimSpace(r.FormValue("accessLevel")); rawLevel != "" {
+	if rawLevel := strings.TrimSpace(request.FormValue("accessLevel")); rawLevel != "" {
 		parsed, parseErr := strconv.Atoi(rawLevel)
 		if parseErr != nil {
-			writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 			return
 		}
 		accessLevel = parsed
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.userFromRequest(r); !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.find_UserByBearerToken(request); !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
 	cleanName := filepath.Base(fileName)
 	if cleanName == "" || cleanName == "." {
 		cleanName = "document.bin"
 	}
-	for _, document := range store.documents {
+	// То же название заменяет актуальную редакцию, идентификатор документа сохраняется.
+	for _, document := range stubStore.documents {
 		if document.title != title {
 			continue
 		}
@@ -378,118 +379,118 @@ func (store *stub) serveUploadDocument(w http.ResponseWriter, r *http.Request) {
 		document.fileName = cleanName
 		document.contentType = contentType
 		document.body = body
-		writeJSON(w, http.StatusOK, uploadResponse{
+		write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
 			DocumentID: document.id,
 			Status:     texts.StatusAccepted,
 			Edition:    document.edition,
 		})
 		return
 	}
-	documentID := "doc-" + strconv.Itoa(store.nextDocument)
-	store.nextDocument++
-	store.addDocument(documentID, title, edition, accessLevel, cleanName, contentType, body)
-	writeJSON(w, http.StatusOK, uploadResponse{
+	documentID := "doc-" + strconv.Itoa(stubStore.nextDocument)
+	stubStore.nextDocument++
+	stubStore.addDocument(documentID, title, edition, accessLevel, cleanName, contentType, body)
+	write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
 		DocumentID: documentID,
 		Status:     texts.StatusAccepted,
 		Edition:    edition,
 	})
 }
 
-func (store *stub) serveDocumentFile(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) serve_DocumentFile(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	document := store.documentsByID[r.PathValue("documentId")]
+	document := stubStore.documentsByID[request.PathValue("documentId")]
 	if document == nil {
-		writeError(w, http.StatusNotFound, texts.ErrorNotFound)
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
 	if record.accessLevel < document.accessLevel {
-		writeError(w, http.StatusForbidden, texts.ErrorAccessDenied)
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
-	w.Header().Set("Content-Type", document.contentType)
-	w.Header().Set("Content-Disposition", attachmentHeader(document.fileName))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(document.body)
+	responseWriter.Header().Set("Content-Type", document.contentType)
+	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(document.fileName))
+	responseWriter.WriteHeader(http.StatusOK)
+	_, _ = responseWriter.Write(document.body)
 }
 
-func (store *stub) serveListUsers(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.adminFromRequest(w, r); !ok {
+func (stubStore *stub) serve_ListUsers(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
 		return
 	}
-	accounts := make([]accountResponse, 0, len(store.users))
-	for _, record := range store.users {
+	accounts := make([]accountResponse, 0, len(stubStore.users))
+	for _, record := range stubStore.users {
 		accounts = append(accounts, record.account())
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		Users []accountResponse `json:"users"`
 	}{Users: accounts})
 }
 
-func (store *stub) serveCreateUser(w http.ResponseWriter, r *http.Request) {
+func (stubStore *stub) serve_CreateUser(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Login       string `json:"login"`
 		Password    string `json:"password"`
 		DisplayName string `json:"displayName"`
 		AccessLevel *int   `json:"accessLevel"`
 	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	body.Login = strings.TrimSpace(body.Login)
 	body.DisplayName = strings.TrimSpace(body.DisplayName)
 	if body.Login == "" || body.Password == "" || body.DisplayName == "" {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	accessLevel := texts.SeedDocumentAccessOpen
 	if body.AccessLevel != nil {
 		accessLevel = *body.AccessLevel
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.adminFromRequest(w, r); !ok {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
 		return
 	}
-	if store.usersByLogin[body.Login] != nil {
-		writeError(w, http.StatusConflict, texts.ErrorLoginTaken)
+	if stubStore.usersByLogin[body.Login] != nil {
+		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorLoginTaken)
 		return
 	}
-	userID := "user-" + strconv.Itoa(store.nextUser)
-	store.nextUser++
-	store.addUser(userID, body.Login, body.Password, body.DisplayName, accessLevel)
-	writeJSON(w, http.StatusOK, store.usersByID[userID].account())
+	userID := "user-" + strconv.Itoa(stubStore.nextUser)
+	stubStore.nextUser++
+	stubStore.addUser(userID, body.Login, body.Password, body.DisplayName, accessLevel)
+	write_JSONResponse(responseWriter, http.StatusOK, stubStore.usersByID[userID].account())
 }
 
-func (store *stub) servePatchUser(w http.ResponseWriter, r *http.Request) {
+func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		DisplayName *string `json:"displayName"`
 		AccessLevel *int    `json:"accessLevel"`
 	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	if body.DisplayName == nil && body.AccessLevel == nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.adminFromRequest(w, r); !ok {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
 		return
 	}
-	record := store.usersByID[r.PathValue("userId")]
+	record := stubStore.usersByID[request.PathValue("userId")]
 	if record == nil {
-		writeError(w, http.StatusNotFound, texts.ErrorNotFound)
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
 	if body.DisplayName != nil {
@@ -498,36 +499,36 @@ func (store *stub) servePatchUser(w http.ResponseWriter, r *http.Request) {
 	if body.AccessLevel != nil {
 		record.accessLevel = *body.AccessLevel
 	}
-	writeJSON(w, http.StatusOK, record.account())
+	write_JSONResponse(responseWriter, http.StatusOK, record.account())
 }
 
-func (store *stub) serveAudit(w http.ResponseWriter, r *http.Request) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.adminFromRequest(w, r); !ok {
+func (stubStore *stub) serve_Audit(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
 		return
 	}
-	entries := store.audit
+	entries := stubStore.audit
 	if entries == nil {
 		entries = []auditEntry{}
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		Entries []auditEntry `json:"entries"`
 	}{Entries: entries})
 }
 
-func (store *stub) serveDraftCheck(w http.ResponseWriter, r *http.Request) {
-	if _, _, _, err := readUpload(w, r); err != nil {
-		writeError(w, http.StatusBadRequest, texts.ErrorInvalidBody)
+func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, request *http.Request) {
+	if _, _, _, err := read_UploadedFile(responseWriter, request); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if _, ok := store.userFromRequest(r); !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.find_UserByBearerToken(request); !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		Recommendations []struct {
 			Text     string   `json:"text"`
 			Citation citation `json:"citation"`
@@ -546,59 +547,59 @@ func (store *stub) serveDraftCheck(w http.ResponseWriter, r *http.Request) {
 					Paragraph:    texts.DraftParagraph,
 					Appendix:     "",
 					Quote:        texts.DraftQuote,
-					OriginalLink: fileLink(texts.SeedInstructionID, texts.DraftParagraph),
+					OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.DraftParagraph),
 				},
 			},
 		},
 	})
 }
 
-func (store *stub) ownedSession(w http.ResponseWriter, r *http.Request) (*sessionRecord, bool) {
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) find_OwnedSession(responseWriter http.ResponseWriter, request *http.Request) (*sessionRecord, bool) {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return nil, false
 	}
-	session := store.sessions[r.PathValue("sessionId")]
+	session := stubStore.sessions[request.PathValue("sessionId")]
 	if session == nil {
-		writeError(w, http.StatusNotFound, texts.ErrorNotFound)
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return nil, false
 	}
 	if session.ownerID != record.id {
-		writeError(w, http.StatusForbidden, texts.ErrorAccessDenied)
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return nil, false
 	}
 	return session, true
 }
 
-func (store *stub) adminFromRequest(w http.ResponseWriter, r *http.Request) (*userRecord, bool) {
-	record, ok := store.userFromRequest(r)
-	if !ok {
-		writeError(w, http.StatusUnauthorized, texts.ErrorUnauthorized)
+func (stubStore *stub) require_AdminUser(responseWriter http.ResponseWriter, request *http.Request) (*userRecord, bool) {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return nil, false
 	}
 	if record.accessLevel < adminAccessLevel {
-		writeError(w, http.StatusForbidden, texts.ErrorAccessDenied)
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return nil, false
 	}
 	return record, true
 }
 
-func (store *stub) userFromRequest(r *http.Request) (*userRecord, bool) {
-	header := r.Header.Get("Authorization")
-	token, ok := strings.CutPrefix(header, "Bearer ")
-	if !ok || token == "" || token != strings.TrimSpace(token) {
+func (stubStore *stub) find_UserByBearerToken(request *http.Request) (*userRecord, bool) {
+	header := request.Header.Get("Authorization")
+	token, found := strings.CutPrefix(header, "Bearer ")
+	if !found || token == "" || token != strings.TrimSpace(token) {
 		return nil, false
 	}
-	userID := store.tokens[token]
-	record := store.usersByID[userID]
+	userID := stubStore.tokens[token]
+	record := stubStore.usersByID[userID]
 	if record == nil {
 		return nil, false
 	}
 	return record, true
 }
 
-func (store *stub) appendAudit(record *userRecord, question, kind string) {
+func (stubStore *stub) append_AuditEntry(record *userRecord, question, kind string) {
 	documents := []shownDocument{}
 	if kind == texts.KindAnswer {
 		documents = []shownDocument{{
@@ -607,15 +608,15 @@ func (store *stub) appendAudit(record *userRecord, question, kind string) {
 			Paragraph:  texts.AnswerParagraph,
 		}}
 	}
-	store.audit = append(store.audit, auditEntry{
-		EntryID:     "audit-" + strconv.Itoa(store.nextAudit),
+	stubStore.audit = append(stubStore.audit, auditEntry{
+		EntryID:     "audit-" + strconv.Itoa(stubStore.nextAudit),
 		UserID:      record.id,
 		DisplayName: record.displayName,
 		Question:    question,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 		Documents:   documents,
 	})
-	store.nextAudit++
+	stubStore.nextAudit++
 }
 
 func (record *userRecord) account() accountResponse {
@@ -637,28 +638,28 @@ func (document *documentRecord) public() documentResponse {
 }
 
 // Следующая реплика после вопроса по полю бланка завершает черновик.
-func replyFor(session *sessionRecord, text string) assistantReply {
+func build_AssistantReply(session *sessionRecord, text string) assistantReply {
 	if session.templateStep == templateStepAsked {
 		session.templateStep = templateStepIdle
-		return templateReadyReply()
+		return build_TemplateReadyReply()
 	}
 	lower := strings.ToLower(text)
 	switch {
 	case strings.Contains(lower, texts.PhraseAccessDenied):
-		return plainReply(texts.KindAccessDenied, texts.AccessDeniedText)
+		return build_PlainReply(texts.KindAccessDenied, texts.AccessDeniedText)
 	case strings.Contains(lower, texts.PhraseNotFound):
-		return plainReply(texts.KindFallback, texts.FallbackText)
+		return build_PlainReply(texts.KindFallback, texts.FallbackText)
 	case strings.Contains(lower, texts.PhraseClarify):
-		return plainReply(texts.KindClarify, texts.ClarifyText)
+		return build_PlainReply(texts.KindClarify, texts.ClarifyText)
 	case strings.Contains(lower, texts.PhraseTemplate):
 		session.templateStep = templateStepAsked
-		return templateFieldReply()
+		return build_TemplateFieldReply()
 	default:
-		return answerReply()
+		return build_AnswerReply()
 	}
 }
 
-func plainReply(kind, text string) assistantReply {
+func build_PlainReply(kind, text string) assistantReply {
 	return assistantReply{
 		Kind:             kind,
 		Text:             text,
@@ -667,7 +668,7 @@ func plainReply(kind, text string) assistantReply {
 	}
 }
 
-func answerReply() assistantReply {
+func build_AnswerReply() assistantReply {
 	return assistantReply{
 		Kind:             texts.KindAnswer,
 		Text:             texts.AnswerText,
@@ -679,13 +680,13 @@ func answerReply() assistantReply {
 			Paragraph:    texts.AnswerParagraph,
 			Appendix:     "",
 			Quote:        texts.AnswerQuote,
-			OriginalLink: fileLink(texts.SeedInstructionID, texts.AnswerParagraph),
+			OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.AnswerParagraph),
 		}},
 	}
 }
 
-func templateFieldReply() assistantReply {
-	reply := plainReply(texts.KindTemplateField, texts.TemplateFieldText)
+func build_TemplateFieldReply() assistantReply {
+	reply := build_PlainReply(texts.KindTemplateField, texts.TemplateFieldText)
 	reply.Template = &templateState{
 		ID:         texts.TemplateID,
 		Title:      texts.TemplateTitle,
@@ -695,8 +696,8 @@ func templateFieldReply() assistantReply {
 	return reply
 }
 
-func templateReadyReply() assistantReply {
-	reply := plainReply(texts.KindTemplateReady, texts.TemplateReadyText)
+func build_TemplateReadyReply() assistantReply {
+	reply := build_PlainReply(texts.KindTemplateReady, texts.TemplateReadyText)
 	reply.Template = &templateState{
 		ID:        texts.TemplateID,
 		Title:     texts.TemplateTitle,
@@ -705,31 +706,31 @@ func templateReadyReply() assistantReply {
 	return reply
 }
 
-func fileLink(documentID, paragraph string) string {
+func build_OriginalFileLink(documentID, paragraph string) string {
 	return "/documents/" + documentID + "/file#p" + paragraph
 }
 
-func passwordMatches(stored, given string) bool {
+func match_Password(stored, given string) bool {
 	if len(stored) != len(given) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(stored), []byte(given)) == 1
 }
 
-func newToken() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
+func create_RandomToken() (string, error) {
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(buf), nil
+	return hex.EncodeToString(randomBytes), nil
 }
 
-func readUpload(w http.ResponseWriter, r *http.Request) (string, []byte, string, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+func read_UploadedFile(responseWriter http.ResponseWriter, request *http.Request) (string, []byte, string, error) {
+	request.Body = http.MaxBytesReader(responseWriter, request.Body, maxUploadBytes)
+	if err := request.ParseMultipartForm(maxUploadBytes); err != nil {
 		return "", nil, "", err
 	}
-	file, header, err := r.FormFile("file")
+	file, header, err := request.FormFile("file")
 	if err != nil {
 		return "", nil, "", err
 	}
@@ -745,7 +746,7 @@ func readUpload(w http.ResponseWriter, r *http.Request) (string, []byte, string,
 	return header.Filename, body, contentType, nil
 }
 
-func attachmentHeader(name string) string {
+func build_AttachmentHeader(name string) string {
 	name = filepath.Base(name)
 	name = strings.Map(func(symbol rune) rune {
 		if symbol == '"' || symbol == '\n' || symbol == '\r' {

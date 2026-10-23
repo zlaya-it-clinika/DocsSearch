@@ -21,7 +21,7 @@ type Config struct {
 }
 
 func Load() Config {
-	loadDotEnv(".env")
+	load_DotEnv(".env")
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("API_MODE")))
 	if mode == "" {
 		mode = ModeStub
@@ -41,7 +41,7 @@ func Load() Config {
 	}
 }
 
-func loadDotEnv(path string) {
+func load_DotEnv(path string) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return
@@ -51,8 +51,8 @@ func loadDotEnv(path string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
+		key, value, found := strings.Cut(line, "=")
+		if !found {
 			continue
 		}
 		key = strings.TrimSpace(key)

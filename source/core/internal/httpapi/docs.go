@@ -23,84 +23,103 @@ type docsGate struct {
 }
 
 type docsLoginView struct {
-	Error       string
-	PasswordSet bool
+	Title         string
+	Heading       string
+	Lead          string
+	PasswordLabel string
+	Submit        string
+	MissingHint   string
+	Error         string
+	PasswordSet   bool
 }
 
-func newDocsGate(password string) *docsGate {
+type docsConsoleView struct {
+	Title                 string
+	Lead                  string
+	Logout                string
+	TokenLabel            string
+	TokenPlaceholder      string
+	Send                  string
+	FilePrefix            string
+	FileSuffix            string
+	HintLogin             string
+	HintMe                string
+	HintCreateSession     string
+	HintHistory           string
+	HintMessage           string
+	HintListDocuments     string
+	HintUpload            string
+	HintFile              string
+	HintUsers             string
+	HintCreateUser        string
+	HintPatchUser         string
+	HintAudit             string
+	HintDraft             string
+	ExampleLoginBody      string
+	ExampleMessageBody    string
+	ExampleCreateUserBody string
+	ExamplePatchUserBody  string
+}
+
+func create_DocsGate(password string) *docsGate {
 	return &docsGate{
 		password: password,
 		sessions: map[string]struct{}{},
 	}
 }
 
-func registerDocs(mux *http.ServeMux, gate *docsGate) {
-	mux.HandleFunc("GET /docs", gate.servePage)
-	mux.HandleFunc("POST /docs/login", gate.serveLogin)
-	mux.HandleFunc("POST /docs/logout", gate.serveLogout)
+func register_DocsRoutes(routeMux *http.ServeMux, docsAccess *docsGate) {
+	routeMux.HandleFunc("GET /docs", docsAccess.serve_DocsPage)
+	routeMux.HandleFunc("POST /docs/login", docsAccess.serve_DocsLogin)
+	routeMux.HandleFunc("POST /docs/logout", docsAccess.serve_DocsLogout)
 }
 
-func (gate *docsGate) servePage(w http.ResponseWriter, r *http.Request) {
-	if !gate.allowed(r) {
-		renderDocs(w, "login", docsLoginView{
-			Error:       gate.lockedMessage(),
-			PasswordSet: gate.password != "",
-		}, http.StatusOK)
+func (docsAccess *docsGate) serve_DocsPage(responseWriter http.ResponseWriter, request *http.Request) {
+	if !docsAccess.has_DocsSession(request) {
+		render_DocsTemplate(responseWriter, "login", loginView(docsAccess.text_WhenDocsPasswordMissing(), docsAccess.password != ""), http.StatusOK)
 		return
 	}
-	renderDocs(w, "console", nil, http.StatusOK)
+	render_DocsTemplate(responseWriter, "console", consoleView(), http.StatusOK)
 }
 
-func (gate *docsGate) serveLogin(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		renderDocs(w, "login", docsLoginView{
-			Error:       texts.DocsBadForm,
-			PasswordSet: gate.password != "",
-		}, http.StatusBadRequest)
+func (docsAccess *docsGate) serve_DocsLogin(responseWriter http.ResponseWriter, request *http.Request) {
+	if parseError := request.ParseForm(); parseError != nil {
+		render_DocsTemplate(responseWriter, "login", loginView(texts.DocsBadForm, docsAccess.password != ""), http.StatusBadRequest)
 		return
 	}
-	if gate.password == "" {
-		renderDocs(w, "login", docsLoginView{
-			Error:       texts.DocsPasswordNotSet,
-			PasswordSet: false,
-		}, http.StatusServiceUnavailable)
+	if docsAccess.password == "" {
+		render_DocsTemplate(responseWriter, "login", loginView(texts.DocsPasswordNotSet, false), http.StatusServiceUnavailable)
 		return
 	}
-	if !passwordMatches(gate.password, r.FormValue("password")) {
-		renderDocs(w, "login", docsLoginView{
-			Error:       texts.DocsWrongPassword,
-			PasswordSet: true,
-		}, http.StatusUnauthorized)
+	if !match_Password(docsAccess.password, request.FormValue("password")) {
+		render_DocsTemplate(responseWriter, "login", loginView(texts.DocsWrongPassword, true), http.StatusUnauthorized)
 		return
 	}
-	token, err := newToken()
-	if err != nil {
-		renderDocs(w, "login", docsLoginView{
-			Error:       texts.DocsBadForm,
-			PasswordSet: true,
-		}, http.StatusInternalServerError)
+	sessionToken, tokenError := create_RandomToken()
+	if tokenError != nil {
+		render_DocsTemplate(responseWriter, "login", loginView(texts.DocsBadForm, true), http.StatusInternalServerError)
 		return
 	}
-	gate.mu.Lock()
-	gate.sessions[token] = struct{}{}
-	gate.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{
+	docsAccess.mu.Lock()
+	docsAccess.sessions[sessionToken] = struct{}{}
+	docsAccess.mu.Unlock()
+	http.SetCookie(responseWriter, &http.Cookie{
 		Name:     docsCookieName,
-		Value:    token,
+		Value:    sessionToken,
 		Path:     "/docs",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/docs", http.StatusSeeOther)
+	http.Redirect(responseWriter, request, "/docs", http.StatusSeeOther)
 }
 
-func (gate *docsGate) serveLogout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(docsCookieName); err == nil {
-		gate.mu.Lock()
-		delete(gate.sessions, cookie.Value)
-		gate.mu.Unlock()
+func (docsAccess *docsGate) serve_DocsLogout(responseWriter http.ResponseWriter, request *http.Request) {
+	if cookie, cookieError := request.Cookie(docsCookieName); cookieError == nil {
+		docsAccess.mu.Lock()
+		delete(docsAccess.sessions, cookie.Value)
+		docsAccess.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(responseWriter, &http.Cookie{
 		Name:     docsCookieName,
 		Value:    "",
 		Path:     "/docs",
@@ -108,32 +127,75 @@ func (gate *docsGate) serveLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/docs", http.StatusSeeOther)
+	http.Redirect(responseWriter, request, "/docs", http.StatusSeeOther)
 }
 
-func (gate *docsGate) allowed(r *http.Request) bool {
-	cookie, err := r.Cookie(docsCookieName)
-	if err != nil || cookie.Value == "" {
+func (docsAccess *docsGate) has_DocsSession(request *http.Request) bool {
+	cookie, cookieError := request.Cookie(docsCookieName)
+	if cookieError != nil || cookie.Value == "" {
 		return false
 	}
-	gate.mu.Lock()
-	defer gate.mu.Unlock()
-	_, ok := gate.sessions[cookie.Value]
-	return ok
+	docsAccess.mu.Lock()
+	defer docsAccess.mu.Unlock()
+	_, sessionFound := docsAccess.sessions[cookie.Value]
+	return sessionFound
 }
 
 // Пустой DOCS_PASSWORD не должен открывать страницу: сравнение двух пустых строк дало бы совпадение.
-func (gate *docsGate) lockedMessage() string {
-	if gate.password == "" {
+func (docsAccess *docsGate) text_WhenDocsPasswordMissing() string {
+	if docsAccess.password == "" {
 		return texts.DocsPasswordNotSet
 	}
 	return ""
 }
 
-func renderDocs(w http.ResponseWriter, name string, data any, status int) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_ = docsTemplates.ExecuteTemplate(w, name, data)
+func loginView(message string, passwordSet bool) docsLoginView {
+	return docsLoginView{
+		Title:         texts.DocsLoginTitle,
+		Heading:       texts.DocsHeading,
+		Lead:          texts.DocsLoginLead,
+		PasswordLabel: texts.DocsPasswordLabel,
+		Submit:        texts.DocsLoginButton,
+		MissingHint:   texts.DocsMissingHint,
+		Error:         message,
+		PasswordSet:   passwordSet,
+	}
+}
+
+func consoleView() docsConsoleView {
+	return docsConsoleView{
+		Title:                 texts.DocsConsoleTitle,
+		Lead:                  texts.DocsConsoleLead,
+		Logout:                texts.DocsLogoutButton,
+		TokenLabel:            texts.DocsTokenLabel,
+		TokenPlaceholder:      texts.DocsTokenPlaceholder,
+		Send:                  texts.DocsSendButton,
+		FilePrefix:            texts.DocsFilePrefix,
+		FileSuffix:            texts.DocsFileSuffix,
+		HintLogin:             texts.DocsHintLogin,
+		HintMe:                texts.DocsHintMe,
+		HintCreateSession:     texts.DocsHintCreateSession,
+		HintHistory:           texts.DocsHintHistory,
+		HintMessage:           texts.DocsHintMessage,
+		HintListDocuments:     texts.DocsHintListDocuments,
+		HintUpload:            texts.DocsHintUpload,
+		HintFile:              texts.DocsHintFile,
+		HintUsers:             texts.DocsHintUsers,
+		HintCreateUser:        texts.DocsHintCreateUser,
+		HintPatchUser:         texts.DocsHintPatchUser,
+		HintAudit:             texts.DocsHintAudit,
+		HintDraft:             texts.DocsHintDraft,
+		ExampleLoginBody:      texts.DocsExampleLoginBody,
+		ExampleMessageBody:    texts.DocsExampleMessageBody,
+		ExampleCreateUserBody: texts.DocsExampleCreateUserBody,
+		ExamplePatchUserBody:  texts.DocsExamplePatchUserBody,
+	}
+}
+
+func render_DocsTemplate(responseWriter http.ResponseWriter, templateName string, data any, status int) {
+	responseWriter.Header().Set("Content-Type", "text/html; charset=utf-8")
+	responseWriter.Header().Set("Cache-Control", "no-store")
+	responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+	responseWriter.WriteHeader(status)
+	_ = docsTemplates.ExecuteTemplate(responseWriter, templateName, data)
 }

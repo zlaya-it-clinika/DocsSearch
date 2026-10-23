@@ -39,57 +39,57 @@ func (writer *statusWriter) Write(payload []byte) (int, error) {
 	return writer.ResponseWriter.Write(payload)
 }
 
-func NewHandler(cfg config.Config) http.Handler {
-	var mux *http.ServeMux
-	if strings.EqualFold(cfg.Mode, config.ModeLive) {
-		mux = http.NewServeMux()
-		mux.HandleFunc("/", serveLive)
+func NewHandler(loadedConfig config.Config) http.Handler {
+	var routeMux *http.ServeMux
+	if strings.EqualFold(loadedConfig.Mode, config.ModeLive) {
+		routeMux = http.NewServeMux()
+		routeMux.HandleFunc("/", serve_LiveNotReady)
 	} else {
-		mux = newStub().routes()
+		routeMux = create_StubStore().register_StubRoutes()
 	}
-	registerDocs(mux, newDocsGate(cfg.DocsPassword))
-	return debugRequests(cfg.Debug, allowCORS(mux))
+	register_DocsRoutes(routeMux, create_DocsGate(loadedConfig.DocsPassword))
+	return log_RequestsWhenDebug(loadedConfig.Debug, allow_CrossOrigin(routeMux))
 }
 
-func serveLive(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, errorBody{Error: texts.ErrorLiveNotReady})
+func serve_LiveNotReady(responseWriter http.ResponseWriter, request *http.Request) {
+	write_JSONResponse(responseWriter, http.StatusNotImplemented, errorBody{Error: texts.ErrorLiveNotReady})
 }
 
-func allowCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+func allow_CrossOrigin(nextHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
+		responseWriter.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		responseWriter.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+		if request.Method == http.MethodOptions {
+			responseWriter.WriteHeader(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r)
+		nextHandler.ServeHTTP(responseWriter, request)
 	})
 }
 
-func debugRequests(enabled bool, next http.Handler) http.Handler {
+func log_RequestsWhenDebug(enabled bool, nextHandler http.Handler) http.Handler {
 	if !enabled {
-		return next
+		return nextHandler
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		recorder := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(recorder, r)
-		log.Printf("%s %s %d", r.Method, r.URL.Path, recorder.status)
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		recorder := &statusWriter{ResponseWriter: responseWriter, status: http.StatusOK}
+		nextHandler.ServeHTTP(recorder, request)
+		log.Printf("%s %s %d", request.Method, request.URL.Path, recorder.status)
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+func write_JSONResponse(responseWriter http.ResponseWriter, status int, payload any) {
+	responseWriter.Header().Set("Content-Type", "application/json; charset=utf-8")
+	responseWriter.WriteHeader(status)
+	_ = json.NewEncoder(responseWriter).Encode(payload)
 }
 
-func writeError(w http.ResponseWriter, status int, code string) {
-	writeJSON(w, status, errorBody{Error: code})
+func write_ErrorResponse(responseWriter http.ResponseWriter, status int, code string) {
+	write_JSONResponse(responseWriter, status, errorBody{Error: code})
 }
 
-func readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBytes)
-	return json.NewDecoder(r.Body).Decode(dst)
+func read_JSONBody(responseWriter http.ResponseWriter, request *http.Request, decodeTarget any) error {
+	request.Body = http.MaxBytesReader(responseWriter, request.Body, maxJSONBytes)
+	return json.NewDecoder(request.Body).Decode(decodeTarget)
 }
