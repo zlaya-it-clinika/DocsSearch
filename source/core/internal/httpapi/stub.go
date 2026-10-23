@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"docssearch/core/internal/blank"
+	"docssearch/core/internal/chunk"
+	"docssearch/core/internal/draftcheck"
 	"docssearch/core/internal/texts"
 )
 
@@ -706,7 +709,8 @@ func (stubStore *stub) serve_Audit(responseWriter http.ResponseWriter, request *
 }
 
 func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, request *http.Request) {
-	if _, _, _, err := read_UploadedFile(responseWriter, request); err != nil {
+	fileName, body, _, err := read_UploadedFile(responseWriter, request)
+	if err != nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -716,32 +720,65 @@ func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, requ
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Recommendations []struct {
-			Text     string   `json:"text"`
-			Citation citation `json:"citation"`
-		} `json:"recommendations"`
-	}{
-		Recommendations: []struct {
-			Text     string   `json:"text"`
-			Citation citation `json:"citation"`
-		}{
-			{
-				Text: texts.DraftRecommendation,
-				Citation: citation{
-					Document:     texts.SeedInstructionTitle,
-					Edition:      texts.EditionDefault,
-					Section:      texts.DraftSection,
-					Paragraph:    texts.DraftParagraph,
-					Appendix:     "",
-					Quote:        texts.DraftQuote,
-					OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.DraftParagraph),
-					DocumentID:   texts.SeedInstructionID,
-					Scope:        texts.ScopeGlobal,
-				},
-			},
-		},
+	recommendations, err := recommendations_ForDraft(fileName, body, draftcheck.Source{
+		DocumentID: texts.SeedInstructionID,
+		Title:      texts.SeedInstructionTitle,
+		Edition:    texts.EditionDefault,
+		Scope:      texts.ScopeGlobal,
 	})
+	if err != nil {
+		write_DraftError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
+		Recommendations []draftRecommendation `json:"recommendations"`
+	}{Recommendations: recommendations})
+}
+
+func recommendations_ForDraft(fileName string, body []byte, source draftcheck.Source) ([]draftRecommendation, error) {
+	plain, err := chunk.Extract_DocumentText(fileName, body)
+	if err != nil {
+		return nil, err
+	}
+	items, err := draftcheck.Check_Draft(plain, source)
+	if err != nil {
+		return nil, err
+	}
+	recommendations := make([]draftRecommendation, 0, len(items))
+	for _, item := range items {
+		link := ""
+		if item.DocumentID != "" && item.Paragraph != "" {
+			link = build_OriginalFileLink(item.DocumentID, item.Paragraph)
+		}
+		recommendations = append(recommendations, draftRecommendation{
+			Text: item.Text,
+			Citation: citation{
+				Document:     item.Title,
+				Edition:      item.Edition,
+				Section:      item.Section,
+				Paragraph:    item.Paragraph,
+				Appendix:     item.Appendix,
+				Quote:        item.Quote,
+				OriginalLink: link,
+				DocumentID:   item.DocumentID,
+				Scope:        item.Scope,
+			},
+		})
+	}
+	return recommendations, nil
+}
+
+func write_DraftError(responseWriter http.ResponseWriter, err error) {
+	if errors.Is(err, chunk.ErrUnsupportedFile) {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
+}
+
+type draftRecommendation struct {
+	Text     string   `json:"text"`
+	Citation citation `json:"citation"`
 }
 
 func (stubStore *stub) find_OwnedSession(responseWriter http.ResponseWriter, request *http.Request) (*sessionRecord, bool) {

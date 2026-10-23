@@ -143,8 +143,6 @@ const (
 	LiveParagraphLabel = "Пункт"
 	LiveAppendixLabel  = "Приложение"
 
-	DraftRecommendation = "В проекте нет отметки о приложении."
-	DraftQuote          = "Точная цитата требования."
-	DraftSection        = "4"
-	DraftParagraph      = "4.1"
+	DraftRecommendation   = "В проекте нет отметки о приложении."
+	DraftSignatureMissing = "В проекте нет подписи."
 )

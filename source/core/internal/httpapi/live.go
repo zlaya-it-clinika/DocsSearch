@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"docssearch/core/internal/blank"
+	"docssearch/core/internal/draftcheck"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
@@ -529,7 +530,8 @@ func (api *liveAPI) serve_Audit(responseWriter http.ResponseWriter, request *htt
 }
 
 func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request *http.Request) {
-	if _, _, _, err := read_UploadedFile(responseWriter, request); err != nil {
+	fileName, body, _, err := read_UploadedFile(responseWriter, request)
+	if err != nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -538,36 +540,33 @@ func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	if _, err := api.store.Find_AccountByToken(request.Context(), token); err != nil {
+	lines, err := api.store.List_VisibleDocuments(request.Context(), token, "")
+	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
+	source := draftcheck.Source{
+		Title:   texts.SeedInstructionTitle,
+		Edition: texts.EditionDefault,
+		Scope:   texts.ScopeGlobal,
+	}
+	for _, line := range lines {
+		if strings.Contains(strings.ToLower(line.Title), "инструкц") {
+			source.DocumentID = line.DocumentID
+			source.Title = line.Title
+			source.Edition = line.Edition
+			source.Scope = line.Scope
+			break
+		}
+	}
+	recommendations, err := recommendations_ForDraft(fileName, body, source)
+	if err != nil {
+		write_DraftError(responseWriter, err)
+		return
+	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Recommendations []struct {
-			Text     string   `json:"text"`
-			Citation citation `json:"citation"`
-		} `json:"recommendations"`
-	}{
-		Recommendations: []struct {
-			Text     string   `json:"text"`
-			Citation citation `json:"citation"`
-		}{
-			{
-				Text: texts.DraftRecommendation,
-				Citation: citation{
-					Document:     texts.SeedInstructionTitle,
-					Edition:      texts.EditionDefault,
-					Section:      texts.DraftSection,
-					Paragraph:    texts.DraftParagraph,
-					Appendix:     "",
-					Quote:        texts.DraftQuote,
-					OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.DraftParagraph),
-					DocumentID:   texts.SeedInstructionID,
-					Scope:        texts.ScopeGlobal,
-				},
-			},
-		},
-	})
+		Recommendations []draftRecommendation `json:"recommendations"`
+	}{Recommendations: recommendations})
 }
 
 func read_BearerToken(request *http.Request) (string, bool) {

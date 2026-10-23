@@ -223,8 +223,23 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	draft := uploadDraft(t, handler, employeeToken)
-	if draft.Code != http.StatusOK || !strings.Contains(draft.Body.String(), "/documents/doc-1/file#p4.1") {
+	if draft.Code != http.StatusOK || !strings.Contains(draft.Body.String(), texts.DraftRecommendation) || !strings.Contains(draft.Body.String(), "/documents/"+texts.SeedInstructionID+"/file#p") {
 		t.Fatalf("draft %d %s", draft.Code, draft.Body.String())
+	}
+	completeDraft := uploadMultipart(t, handler, "/drafts/check", employeeToken, "ready.txt", "Приложение № 1. Подпись Иванова.", nil)
+	if completeDraft.Code != http.StatusOK {
+		t.Fatalf("complete draft %d %s", completeDraft.Code, completeDraft.Body.String())
+	}
+	var completeBody struct {
+		Recommendations []draftRecommendation `json:"recommendations"`
+	}
+	decodeInto(t, completeDraft, &completeBody)
+	if len(completeBody.Recommendations) != 0 {
+		t.Fatalf("complete recommendations %+v", completeBody.Recommendations)
+	}
+	rejectedDraft := uploadMultipart(t, handler, "/drafts/check", employeeToken, "sheet.xlsx", "нет", nil)
+	if rejectedDraft.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported draft %d", rejectedDraft.Code)
 	}
 
 	badPassword := doJSON(t, handler, http.MethodPost, "/auth/login", "", map[string]string{
