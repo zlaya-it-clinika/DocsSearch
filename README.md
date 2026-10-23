@@ -155,6 +155,8 @@ flowchart LR
 
 ```json
 {
+  "canRename": true,
+  "canDelete": true,
   "sessions": [
     {
       "sessionId": "session-1",
@@ -166,7 +168,23 @@ flowchart LR
 }
 ```
 
-`title` - первый вопрос сессии, не длиннее 60 символов. У пустой сессии заголовок пустой.
+`title` - первый вопрос сессии, не длиннее 60 символов, пока пользователь не переименовал чат. У пустой сессии заголовок пустой.
+
+`canRename` и `canDelete` - может ли пользователь переименовывать и удалять свои сессии. Клиент показывает эти пункты меню чата только при `true`.
+
+### `PATCH /sessions/{sessionId}`
+
+Переименование своей сессии:
+
+```json
+{ "title": "Регистрация входящих" }
+```
+
+Ответ - объект сессии, как элемент списка `GET /sessions`. Пустой `title` или длиннее 120 символов - `400 invalid_body`. Чужая сессия - `403 access_denied`, нет сессии - `404 not_found`.
+
+### `DELETE /sessions/{sessionId}`
+
+Удаление своей сессии вместе с историей. Ответ `204` без тела. Записи журнала аудита остаются. Чужая сессия - `403 access_denied`, нет сессии - `404 not_found`.
 
 ### `GET /sessions/{sessionId}`
 
@@ -494,10 +512,10 @@ WHERE (scope = 'global' AND access_level <= :userLevel)
 
 Объём: клиенты ходят только в контракт фазы 0. Фаза идёт параллельно с фазами 2-6. Кто: сайт и виджет - Syharik3316, бот - другие участники.
 
-- [ ] Страница чата в [source/web](source/web)
-- [ ] Попап-виджет для внутреннего портала
+- [x] Страница чата в [source/web](source/web)
+- [x] Попап-виджет для внутреннего портала
 - [ ] Клиент бота в [source/bot](source/bot)
-- [ ] Отдельный Docker сайта в [source/web](source/web): свой compose, без контейнеров ядра
+- [x] Отдельный Docker сайта в [source/web](source/web): свой compose, без контейнеров ядра
 
 ### Фаза 2. База знаний
 
@@ -523,6 +541,7 @@ WHERE (scope = 'global' AND access_level <= :userLevel)
 - [x] Неоднозначный вопрос получает `clarify`
 - [x] Вопрос вне базы получает `fallback` и не достраивает факты
 - [x] Сессия помнит предыдущие реплики
+- [ ] Меню чата: `PATCH /sessions/{sessionId}` с `title`, `DELETE /sessions/{sessionId}`, флаги `canRename` и `canDelete` в `GET /sessions`
 
 ### Фаза 4. Доступ и аудит
 

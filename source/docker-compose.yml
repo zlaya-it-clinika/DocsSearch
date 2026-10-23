@@ -30,7 +30,7 @@ services:
       DOCS_PASSWORD: ${DOCS_PASSWORD:?Задайте DOCS_PASSWORD в source/.env}
       DATABASE_URL: postgres://${POSTGRES_USER:-docs}:${POSTGRES_PASSWORD:-docs}@postgres:5432/${POSTGRES_DB:-docssearch}?sslmode=disable
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
-      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-vikhr-nemo}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       OLLAMA_EMBED_DIMENSIONS: ${OLLAMA_EMBED_DIMENSIONS:-768}
     # Только для отладки с этой машины: страница /docs ядра. Браузеры сотрудников ходят через веб
@@ -93,15 +93,31 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # Однократно скачивает модели в том ollama-models и завершается
+  # Однократно готовит модели в томе ollama-models и завершается.
+  # Чат-модель собирается из Modelfile в source/ollama (параметры генерации), без Modelfile - просто скачивается
   ollama-models:
     image: ollama/ollama:latest
     profiles: ["ollama"]
     environment:
       OLLAMA_HOST: http://ollama:11434
+      EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-vikhr-nemo}
+      CHAT_MODELFILE: ${OLLAMA_CHAT_MODELFILE-vikhr-nemo.Modelfile}
+    volumes:
+      - ./ollama:/modelfiles:ro
+    working_dir: /modelfiles
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - ollama pull "${OLLAMA_EMBED_MODEL:-nomic-embed-text}" && ollama pull "${OLLAMA_CHAT_MODEL:-qwen2.5:7b}"
+      - |
+        set -e
+        ollama pull "$$EMBED_MODEL"
+        if [ -n "$$CHAT_MODELFILE" ]; then
+          base=$$(grep -m1 '^FROM ' "$$CHAT_MODELFILE" | cut -d' ' -f2)
+          case "$$base" in ./*|/*) ;; *) ollama pull "$$base" ;; esac
+          ollama create "$$CHAT_MODEL" -f "$$CHAT_MODELFILE"
+        else
+          ollama pull "$$CHAT_MODEL"
+        fi
     depends_on:
       ollama:
         condition: service_healthy

@@ -121,6 +121,13 @@
 	<symbol id="upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 		<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>
 	</symbol>
+	<symbol id="more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="2.5"/>
+	</symbol>
+	<symbol id="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M9 4h6l-1 5 4 4H6l4-4z"/>
+		<path d="M12 13v7"/>
+	</symbol>
 	<symbol id="trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 		<path d="M4 7h16M10 11v6M14 11v6"/>
 		<path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>

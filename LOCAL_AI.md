@@ -8,7 +8,7 @@
 |---|---|---|
 | Индексация документов: текст режется на фрагменты, для каждого считается вектор | `nomic-embed-text` | работает |
 | Поиск похожих фрагментов в PostgreSQL (pgvector) с учётом уровня доступа | `nomic-embed-text` для вектора вопроса | работает |
-| Ответ в чате: пересказ по найденным фрагментам, цитаты, процент релевантности | `OLLAMA_CHAT_MODEL`, например `qwen2.5:7b` | работает |
+| Ответ в чате: пересказ по найденным фрагментам, цитаты, процент релевантности | `OLLAMA_CHAT_MODEL`: `vikhr-nemo` (Vikhr-Nemo-12B) | работает |
 | Уточняющий вопрос: если два лучших фрагмента из разных документов почти одинаково подходят, модель спрашивает, о каком документе речь | `OLLAMA_CHAT_MODEL` | работает |
 | Честный отказ: если подходящих фрагментов нет, ответ `fallback` без обращения к модели | - | работает |
 | Бланки и проверка черновика | - | пока заглушки ядра |
@@ -17,8 +17,8 @@
 
 ## Что понадобится
 
-- Windows 10 или 11, от 16 ГБ оперативной памяти
-- около 8 ГБ на диске под модели
+- Windows 10 или 11, от 16 ГБ оперативной памяти. Vikhr-Nemo-12B в квантизации Q4_K_M занимает около 8 ГБ памяти при работе, с видеокартой от 8 ГБ отвечает в разы быстрее
+- около 10 ГБ на диске под модели
 - Docker Desktop (для PostgreSQL)
 - Go 1.24 или новее (для запуска ядра)
 - Node.js 22 или новее (для веба)
@@ -53,13 +53,41 @@ curl http://127.0.0.1:11434/api/version
 ollama pull nomic-embed-text
 ```
 
-Чат-модель с нормальным русским, для ответов в чате:
+Чат-модель проекта - [Vikhr-Nemo-12B-Instruct-R-21-09-24](https://huggingface.co/Vikhrmodels/Vikhr-Nemo-12B-Instruct-R-21-09-24): Mistral-Nemo 12B, обученная на русском, лицензия Apache-2.0. Ollama берёт её готовую квантизацию в формате GGUF прямо с Hugging Face. Параметры генерации заданы в [source/ollama/vikhr-nemo.Modelfile](source/ollama/vikhr-nemo.Modelfile): авторы модели советуют temperature 0.1-0.5, а ядро своих параметров не передаёт.
+
+Из корня репозитория:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull hf.co/bartowski/Vikhr-Nemo-12B-Instruct-R-21-09-24-GGUF:Q4_K_M
 ```
 
-На слабом компьютере вместо неё можно взять `qwen2.5:3b`: быстрее, но отвечает проще.
+```bash
+ollama create vikhr-nemo -f source/ollama/vikhr-nemo.Modelfile
+```
+
+Проверка: `ollama run vikhr-nemo "Кратко: что такое входящий документ?"` отвечает по-русски. В `.env` ядра: `OLLAMA_CHAT_MODEL=vikhr-nemo`.
+
+Другая квантизация: заменить `Q4_K_M` в обеих командах и в Modelfile. `Q5_K_M` (8 ГБ) точнее, `IQ4_XS` (6 ГБ) легче. Список файлов: репозиторий `bartowski/Vikhr-Nemo-12B-Instruct-R-21-09-24-GGUF` на Hugging Face.
+
+### Своя дообученная версия Vikhr
+
+Ollama запускает модели в формате GGUF. После дообучения:
+
+1. Если обучали LoRA-адаптер, слить его с базовой моделью (например, `merge_and_unload()` в PEFT) и сохранить в safetensors.
+2. Перевести в GGUF и квантовать инструментами llama.cpp:
+
+```bash
+python convert_hf_to_gguf.py путь/к/модели --outfile vikhr-docs-f16.gguf
+```
+
+```bash
+llama-quantize vikhr-docs-f16.gguf vikhr-docs-Q4_K_M.gguf Q4_K_M
+```
+
+3. Положить `vikhr-docs-Q4_K_M.gguf` в `source/ollama` и поменять в `vikhr-nemo.Modelfile` первую строку `FROM` на `FROM ./vikhr-docs-Q4_K_M.gguf`.
+4. Пересоздать модель: `ollama create vikhr-nemo -f source/ollama/vikhr-nemo.Modelfile`. Имя `vikhr-nemo` остаётся прежним, поэтому `.env` ядра менять не нужно.
+
+Файлы `.gguf` весят гигабайты, в git их не кладём: передавайте через общий диск.
 
 Проверка эмбеддингов: команда ниже должна вывести `768`.
 
@@ -87,7 +115,7 @@ API_MODE=live
 DOCS_PASSWORD=любой-пароль
 DATABASE_URL=postgres://docs:docs@localhost:5432/docssearch?sslmode=disable
 OLLAMA_URL=http://127.0.0.1:11434
-OLLAMA_CHAT_MODEL=qwen2.5:7b
+OLLAMA_CHAT_MODEL=vikhr-nemo
 OLLAMA_EMBED_MODEL=nomic-embed-text
 OLLAMA_EMBED_DIMENSIONS=768
 ```

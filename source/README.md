@@ -14,7 +14,7 @@
 ## Что нужно
 
 - Docker Desktop, запущенный
-- для ответов ИИ: Ollama на этой машине с моделями `nomic-embed-text` и `qwen2.5:7b` (как поставить - в [LOCAL_AI.md](../LOCAL_AI.md)) или профиль `ollama` ниже
+- для ответов ИИ: Ollama на этой машине с моделями `nomic-embed-text` и `vikhr-nemo` (как поставить - в [LOCAL_AI.md](../LOCAL_AI.md)) или профиль `ollama` ниже
 
 ## Запуск
 
@@ -48,7 +48,7 @@ docker compose ps
 
 ## Если Ollama на этой машине нет
 
-Ollama запустится в контейнере, модели скачаются сами (около 5 ГБ):
+Ollama запустится в контейнере, скачает `nomic-embed-text` и Vikhr-Nemo-12B (около 8 ГБ) и соберёт `vikhr-nemo` из [ollama/vikhr-nemo.Modelfile](ollama/vikhr-nemo.Modelfile):
 
 1. В `.env` поменять адрес:
 
