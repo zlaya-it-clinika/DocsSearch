@@ -109,10 +109,68 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 
 func insertDocument(t *testing.T, ctx context.Context, store *LiveStore, documentID, scope, ownerID string, accessLevel int) {
 	t.Helper()
+	insertTitledDocument(t, ctx, store, documentID, documentID, scope, ownerID, accessLevel)
+}
+
+func TestFind_ContactChunkStaysOutOfAnswerSearch(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is empty")
+	}
+	store, err := Open_LiveStore(databaseURL, 768, nil, auth.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+
+	ctx := context.Background()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	instructionID := "doc-instr-" + suffix
+	contactID := "doc-contact-" + suffix
+	foreignID := "doc-foreign-contact-" + suffix
+	ownerID := "user-1"
+	foreignOwnerID := "user-foreign-" + suffix
+	insertTitledDocument(t, ctx, store, instructionID, "Инструкция по документообороту", texts.ScopeGlobal, "", 1)
+	insertTitledDocument(t, ctx, store, contactID, "Контакты подразделений", texts.ScopeGlobal, "", 1)
+	insertTitledDocument(t, ctx, store, foreignID, "Контакты сотрудника", texts.ScopePersonal, foreignOwnerID, 1)
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM documents WHERE document_id IN ($1, $2, $3)`, instructionID, contactID, foreignID)
+	})
+
+	near := make([]float32, 768)
+	near[2+int(time.Now().UnixNano()%700)] = 1
+	insertChunk(t, ctx, store, instructionID, texts.ScopeGlobal, "", "открытый пункт", near)
+	contactBody := "Центр документационного обеспечения\nтелефон 1-10-20"
+	insertChunk(t, ctx, store, contactID, texts.ScopeGlobal, "", contactBody, near)
+	insertChunk(t, ctx, store, foreignID, texts.ScopePersonal, foreignOwnerID, "чужой телефон", near)
+
+	visible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, 1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasAllContents(visible, "открытый пункт") || hasAnyContents(visible, contactBody, "чужой телефон") {
+		t.Fatalf("answer search %+v", visible)
+	}
+
+	contact, found, err := store.Find_ContactChunk(ctx, near, ownerID, 1)
+	if err != nil || !found || contact.DocumentID != contactID || contact.Content != contactBody {
+		t.Fatalf("contact %+v found %v err %v", contact, found, err)
+	}
+
+	far := make([]float32, 768)
+	far[4] = 1
+	_, weakFound, err := store.Find_ContactChunk(ctx, far, ownerID, 1)
+	if err != nil || weakFound {
+		t.Fatalf("weak contact found %v err %v", weakFound, err)
+	}
+}
+
+func insertTitledDocument(t *testing.T, ctx context.Context, store *LiveStore, documentID, title, scope, ownerID string, accessLevel int) {
+	t.Helper()
 	_, err := store.pool.Exec(ctx, `
 		INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, file_name, content_type, body)
 		VALUES ($1, $2, '1.0', $3, $4, $5, 'probe.txt', 'text/plain', $6)`,
-		documentID, documentID, accessLevel, scope, ownerID, []byte("probe"))
+		documentID, title, accessLevel, scope, ownerID, []byte("probe"))
 	if err != nil {
 		t.Fatal(err)
 	}

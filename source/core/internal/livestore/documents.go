@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"docssearch/core/internal/chunk"
+	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/texts"
 )
 
@@ -235,8 +236,9 @@ func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding [
 			c.embedding <=> $1::vector AS distance
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
-		WHERE (d.scope = 'global' AND d.access_level <= $2)
-			OR (d.scope = 'personal' AND d.owner_id = $3)
+		WHERE ((d.scope = 'global' AND d.access_level <= $2)
+			OR (d.scope = 'personal' AND d.owner_id = $3))
+			AND NOT `+contacts.Title_SQLCondition()+`
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $4`, accessLevel, userID)
 }
@@ -248,8 +250,29 @@ func (store *LiveStore) Find_ClosedGlobalChunks(ctx context.Context, embedding [
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
 		WHERE d.scope = 'global' AND d.access_level > $2
+			AND NOT `+contacts.Title_SQLCondition()+`
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $3`, accessLevel)
+}
+
+func (store *LiveStore) Find_ContactChunk(ctx context.Context, embedding []float32, userID string, accessLevel int) (SimilarChunk, bool, error) {
+	found, err := store.query_Chunks(ctx, embedding, 1, `
+		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope,
+			c.embedding <=> $1::vector AS distance
+		FROM chunks c
+		JOIN documents d ON d.document_id = c.document_id
+		WHERE ((d.scope = 'global' AND d.access_level <= $2)
+			OR (d.scope = 'personal' AND d.owner_id = $3))
+			AND `+contacts.Title_SQLCondition()+`
+		ORDER BY c.embedding <=> $1::vector
+		LIMIT $4`, accessLevel, userID)
+	if err != nil {
+		return SimilarChunk{}, false, err
+	}
+	if len(found) == 0 || similarity_OfChunk(found[0]) < minReplySimilarity {
+		return SimilarChunk{}, false, nil
+	}
+	return found[0], true, nil
 }
 
 func (store *LiveStore) query_Chunks(ctx context.Context, embedding []float32, limit int, query string, args ...any) ([]SimilarChunk, error) {

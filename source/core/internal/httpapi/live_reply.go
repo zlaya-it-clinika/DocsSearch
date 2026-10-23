@@ -3,12 +3,17 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
 )
+
+var fragmentNumber = regexp.MustCompile(`\d+`)
 
 type chatTurn struct {
 	Role string
@@ -20,7 +25,7 @@ func build_LiveAssistantReply(chatter interface {
 }, question string, history []chatTurn, visible []livestore.SimilarChunk, closed []livestore.SimilarChunk) (assistantReply, []shownDocument, error) {
 	kind, selected := livestore.Choose_LiveReplyKind(visible, closed)
 	if kind == texts.KindFallback {
-		return build_PlainReply(texts.KindFallback, texts.FallbackText), []shownDocument{}, nil
+		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
 	}
 	if kind == texts.KindAccessDenied {
 		return build_PlainReply(texts.KindAccessDenied, texts.AccessDeniedText), []shownDocument{}, nil
@@ -28,18 +33,25 @@ func build_LiveAssistantReply(chatter interface {
 	if chatter == nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
-	var prompt string
 	if kind == texts.KindClarify {
-		prompt = texts.LiveClarifyPrompt
-	} else {
-		prompt = texts.LiveAnswerPrompt
+		text, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveClarifyPrompt, question, history, selected))
+		if err != nil || strings.TrimSpace(text) == "" {
+			return assistantReply{}, nil, livestore.ErrEmbedUnavailable
+		}
+		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
 	}
-	text, err := chatter.Complete_Chat(build_ChatMessages(prompt, question, history, selected))
-	if err != nil || strings.TrimSpace(text) == "" {
+	selectText, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveSelectPrompt, question, history, selected))
+	if err != nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
-	if kind == texts.KindClarify {
-		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
+	// Пустой список номеров - отказ. Второй вызов модели не делается.
+	selected = chunks_AtIndexes(selected, parse_FragmentNumbers(selectText, len(selected)))
+	if len(selected) == 0 {
+		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
+	}
+	text, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveAnswerPrompt, question, history, selected))
+	if err != nil || strings.TrimSpace(text) == "" {
+		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
 	reply := build_PlainReply(texts.KindAnswer, strings.TrimSpace(text))
 	reply.RelevancePercent = livestore.Relevance_Percent(selected[0])
@@ -65,7 +77,67 @@ func build_LiveAssistantReply(chatter interface {
 			Scope:      item.Scope,
 		})
 	}
-	return reply, documents, nil
+	return reply_WithContacts(reply, nil), documents, nil
+}
+
+func parse_FragmentNumbers(raw string, count int) []int {
+	trimmed := strings.TrimSpace(raw)
+	folded := strings.Trim(strings.ToLower(trimmed), ".,!;: ")
+	if trimmed == "" || folded == texts.BlankSkipNo {
+		return nil
+	}
+	matches := fragmentNumber.FindAllString(trimmed, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(matches))
+	seen := map[int]bool{}
+	for _, match := range matches {
+		number, convError := strconv.Atoi(match)
+		if convError != nil || number < 1 || number > count || seen[number] {
+			continue
+		}
+		seen[number] = true
+		indexes = append(indexes, number-1)
+	}
+	return indexes
+}
+
+func chunks_AtIndexes(chunks []livestore.SimilarChunk, indexes []int) []livestore.SimilarChunk {
+	chosen := map[int]bool{}
+	for _, index := range indexes {
+		chosen[index] = true
+	}
+	picked := make([]livestore.SimilarChunk, 0, len(indexes))
+	for index, chunk := range chunks {
+		if chosen[index] {
+			picked = append(picked, chunk)
+		}
+	}
+	return picked
+}
+
+func contacts_ForText(text, question string) []replyContact {
+	return contacts_FromEntries(contacts.Parse_Entries(text), question)
+}
+
+func contacts_FromEntries(entries []contacts.Entry, question string) []replyContact {
+	entry, ok := contacts.Choose_Entry(entries, question)
+	if !ok {
+		return []replyContact{}
+	}
+	return []replyContact{{Department: entry.Department, Channel: entry.Channel}}
+}
+
+func reply_WithContacts(reply assistantReply, list []replyContact) assistantReply {
+	if reply.Kind != texts.KindAnswer && reply.Kind != texts.KindFallback {
+		return reply
+	}
+	if list == nil {
+		list = []replyContact{}
+	}
+	reply.Contacts = &list
+	return reply
 }
 
 func build_ChatMessages(prompt, question string, history []chatTurn, chunks []livestore.SimilarChunk) []ollama.ChatMessage {

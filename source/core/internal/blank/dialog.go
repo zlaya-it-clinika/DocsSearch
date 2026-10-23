@@ -25,6 +25,7 @@ type Step struct {
 	FieldLabel string
 	Question   string
 	DraftText  string
+	DraftDocx  []byte
 	Ready      bool
 	State      FillState
 }
@@ -161,17 +162,24 @@ func step_ForField(item Blank, state FillState, field BlankField) Step {
 }
 
 func finish_Blank(item Blank, state FillState) Step {
-	return Step{
+	step := Step{
 		BlankID:   item.ID,
 		Title:     item.Title,
 		DraftText: Build_Draft(item, state),
 		Ready:     true,
 		State:     FillState{},
 	}
+	if docx, err := Fill_ModuleDocx(item.ID, state); err == nil {
+		step.DraftDocx = docx
+	}
+	return step
 }
 
 func Build_Draft(item Blank, state FillState) string {
-	body := item.Body
+	return clean_Draft(apply_Fields(item.Body, item, state))
+}
+
+func apply_Fields(body string, item Blank, state FillState) string {
 	for _, field := range item.Fields {
 		if state_Skips(state, field.Number) {
 			body = skip_Field(body, field.Number)
@@ -183,7 +191,7 @@ func Build_Draft(item Blank, state FillState) string {
 		}
 		body = apply_Answer(body, field.Number, answer)
 	}
-	return clean_Draft(body)
+	return body
 }
 
 func apply_Answer(body, number, answer string) string {
