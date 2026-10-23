@@ -1,0 +1,21 @@
+# Только веб. Ядро и PostgreSQL поднимаются своим compose в source/core.
+# Запуск: cp .env.example .env, поправить CORE_API_URL, затем docker compose up -d --build
+services:
+  web:
+    build: .
+    image: docssearch-web:local
+    env_file:
+      - .env
+    environment:
+      # Ядро на той же машине, но в другом compose: доступно через адрес хоста
+      CORE_API_URL: ${CORE_API_URL_DOCKER:-http://host.docker.internal:8080}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
