@@ -17,6 +17,7 @@ import (
 
 	"docssearch/core/internal/blank"
 	"docssearch/core/internal/chunk"
+	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/draftcheck"
 	"docssearch/core/internal/texts"
 )
@@ -72,21 +73,36 @@ type citation struct {
 	Scope        string `json:"scope"`
 }
 
+type replyContact struct {
+	Department string `json:"department"`
+	Channel    string `json:"channel"`
+}
+
 type templateState struct {
 	ID         string `json:"id"`
 	Title      string `json:"title"`
 	Field      string `json:"field,omitempty"`
 	FieldLabel string `json:"fieldLabel,omitempty"`
 	DraftText  string `json:"draftText,omitempty"`
+	FileLink   string `json:"fileLink,omitempty"`
+	DraftLink  string `json:"draftLink,omitempty"`
+}
+
+type draftFile struct {
+	ownerID     string
+	fileName    string
+	contentType string
+	body        []byte
 }
 
 type assistantReply struct {
-	Role             string         `json:"role,omitempty"`
-	Kind             string         `json:"kind"`
-	Text             string         `json:"text"`
-	RelevancePercent int            `json:"relevancePercent"`
-	Citations        []citation     `json:"citations"`
-	Template         *templateState `json:"template,omitempty"`
+	Role             string          `json:"role,omitempty"`
+	Kind             string          `json:"kind"`
+	Text             string          `json:"text"`
+	RelevancePercent int             `json:"relevancePercent"`
+	Citations        []citation      `json:"citations"`
+	Contacts         *[]replyContact `json:"contacts,omitempty"`
+	Template         *templateState  `json:"template,omitempty"`
 }
 
 type userLine struct {
@@ -168,10 +184,12 @@ type stub struct {
 	documents     []*documentRecord
 	documentsByID map[string]*documentRecord
 	sessions      map[string]*sessionRecord
+	draftsByID    map[string]*draftFile
 	audit         []auditEntry
 	nextUser      int
 	nextDocument  int
 	nextSession   int
+	nextDraft     int
 	nextAudit     int
 }
 
@@ -182,9 +200,11 @@ func create_StubStore() *stub {
 		tokens:        map[string]string{},
 		documentsByID: map[string]*documentRecord{},
 		sessions:      map[string]*sessionRecord{},
+		draftsByID:    map[string]*draftFile{},
 		nextUser:      2,
 		nextDocument:  3,
 		nextSession:   1,
+		nextDraft:     1,
 		nextAudit:     1,
 	}
 	stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
@@ -236,6 +256,8 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("POST /documents", stubStore.serve_UploadDocument)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", stubStore.serve_DeleteDocument)
+	routeMux.HandleFunc("GET /blanks/{blankId}/file", stubStore.serve_BlankFile)
+	routeMux.HandleFunc("GET /drafts/{draftId}/file", stubStore.serve_DraftFile)
 	routeMux.HandleFunc("GET /users", stubStore.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", stubStore.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", stubStore.serve_PatchUser)
@@ -384,7 +406,18 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		return
 	}
 	record := stubStore.usersByID[session.ownerID]
-	reply := build_AssistantReply(session, body.Text)
+	reply, step, replyError := build_AssistantReply(session, body.Text)
+	if replyError != nil {
+		write_DraftError(responseWriter, replyError)
+		return
+	}
+	if step.Ready && len(step.DraftDocx) > 0 && reply.Template != nil {
+		draftID := stubStore.save_DraftFile(record.id, step.BlankID+".docx", step.DraftDocx)
+		reply.Template.DraftLink = draft_FileLink(draftID)
+	}
+	if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
+		reply = reply_WithContacts(reply, stubStore.lookup_Contacts(record, body.Text))
+	}
 	if session.title == "" {
 		session.title = build_SessionTitle(body.Text)
 	}
@@ -898,23 +931,52 @@ func (document *documentRecord) line(viewer *userRecord, ownerName string) docum
 	}
 }
 
+func (stubStore *stub) lookup_Contacts(record *userRecord, question string) []replyContact {
+	if record == nil {
+		return []replyContact{}
+	}
+	entries := []contacts.Entry{}
+	for _, document := range stubStore.documents {
+		if document == nil || !contacts.Title_IsDirectory(document.title) {
+			continue
+		}
+		if document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel) != http.StatusOK {
+			continue
+		}
+		plain, extractError := chunk.Extract_DocumentText(document.fileName, document.body)
+		if extractError != nil {
+			continue
+		}
+		entries = append(entries, contacts.Parse_Entries(plain)...)
+	}
+	return contacts_FromEntries(entries, question)
+}
+
 // Пока бланк заполняется, реплика - ответ на поле, а не новая фраза заглушки.
-func build_AssistantReply(session *sessionRecord, text string) assistantReply {
+func build_AssistantReply(session *sessionRecord, text string) (assistantReply, blank.Step, error) {
 	step, handled := blank.Advance_Blank(session.blankFill, text)
 	if handled {
 		apply_BlankStep(session, step)
-		return reply_FromBlank(step)
+		return reply_FromBlank(step), step, nil
 	}
 	lower := strings.ToLower(text)
 	switch {
 	case strings.Contains(lower, texts.PhraseAccessDenied):
-		return build_PlainReply(texts.KindAccessDenied, texts.AccessDeniedText)
+		return build_PlainReply(texts.KindAccessDenied, texts.AccessDeniedText), blank.Step{}, nil
 	case strings.Contains(lower, texts.PhraseNotFound):
-		return build_PlainReply(texts.KindFallback, texts.FallbackText)
+		return build_PlainReply(texts.KindFallback, texts.FallbackText), blank.Step{}, nil
 	case strings.Contains(lower, texts.PhraseClarify):
-		return build_PlainReply(texts.KindClarify, texts.ClarifyText)
+		return build_PlainReply(texts.KindClarify, texts.ClarifyText), blank.Step{}, nil
+	case strings.Contains(lower, texts.PhrasePrepare):
+		reply, err := reply_ForPreparation(draftcheck.Source{
+			DocumentID: texts.SeedInstructionID,
+			Title:      texts.SeedInstructionTitle,
+			Edition:    texts.EditionDefault,
+			Scope:      texts.ScopeGlobal,
+		})
+		return reply, blank.Step{}, err
 	default:
-		return build_AnswerReply()
+		return build_AnswerReply(), blank.Step{}, nil
 	}
 }
 
@@ -933,6 +995,7 @@ func reply_FromBlank(step blank.Step) assistantReply {
 			ID:        step.BlankID,
 			Title:     step.Title,
 			DraftText: step.DraftText,
+			FileLink:  blank_FileLink(step.BlankID),
 		}
 		return reply
 	}
@@ -942,8 +1005,56 @@ func reply_FromBlank(step blank.Step) assistantReply {
 		Title:      step.Title,
 		Field:      step.Field,
 		FieldLabel: step.FieldLabel,
+		FileLink:   blank_FileLink(step.BlankID),
 	}
 	return reply
+}
+
+func (stubStore *stub) save_DraftFile(ownerID, fileName string, body []byte) string {
+	draftID := "draft-" + strconv.Itoa(stubStore.nextDraft)
+	stubStore.nextDraft++
+	stubStore.draftsByID[draftID] = &draftFile{
+		ownerID:     ownerID,
+		fileName:    fileName,
+		contentType: texts.DocxContentType,
+		body:        body,
+	}
+	return draftID
+}
+
+func (stubStore *stub) serve_BlankFile(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.find_UserByBearerToken(request); !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	fileName, body, err := blank.Read_ModuleFile(request.PathValue("blankId"))
+	if err != nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return
+	}
+	write_FileResponse(responseWriter, fileName, texts.DocxContentType, body)
+}
+
+func (stubStore *stub) serve_DraftFile(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	file := stubStore.draftsByID[request.PathValue("draftId")]
+	if file == nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return
+	}
+	if file.ownerID != record.id {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	write_FileResponse(responseWriter, file.fileName, file.contentType, file.body)
 }
 
 func encode_FillState(state blank.FillState) []byte {

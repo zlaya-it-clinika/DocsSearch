@@ -86,6 +86,7 @@ const (
 	PhraseNotFound     = "не найдено"
 	PhraseClarify      = "уточни"
 	PhraseTemplate     = "шаблон"
+	PhrasePrepare      = "как подготовить"
 
 	BlankSkipNo   = "нет"
 	BlankSkipPass = "пропустить"
@@ -121,6 +122,7 @@ const (
 	EditionDefault       = "1.0"
 	DefaultDocumentTitle = "Документ"
 	PlainTextContentType = "text/plain; charset=utf-8"
+	DocxContentType      = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 	AnswerText      = "Входящий документ регистрируют в день поступления и присваивают ему номер."
 	AnswerQuote     = "Точная цитата из пункта инструкции."
@@ -133,7 +135,12 @@ const (
 
 	TemplateReadyText = "Черновик собран."
 
-	LiveAnswerPrompt   = "Отвечай только по переданным фрагментам инструкций. Не добавляй факты, которых в них нет. Коротко, по-русски."
+	PrepareAnswerText           = "Чтобы подготовить документ:\n1. Проверьте состав реквизитов (пункт 8.1).\n2. Оформите реквизиты, которые положены этому виду документа (пункт 8.2)."
+	PrepareParagraphComposition = "8.1"
+	PrepareParagraphList        = "8.2"
+
+	LiveSelectPrompt   = "По списку фрагментов верни только номера тех, которые нужны для ответа на вопрос. Номера через запятую. Если ни один фрагмент не подходит, верни нет. Не пиши сам ответ и не добавляй фактов."
+	LiveAnswerPrompt   = "Отвечай только по переданным фрагментам инструкций. Не добавляй факты, которых в них нет. Сложные формулировки и термины объясни простыми словами. Не копируй текст пункта дословно. Коротко, по-русски."
 	LiveClarifyPrompt  = "Вопрос подходит к разным документам. Задай один короткий уточняющий вопрос, о каком документе речь. Не отвечай по существу и не добавляй фактов."
 	LiveQuestionLabel  = "Вопрос"
 	LiveFragmentsLabel = "Фрагменты"
@@ -145,4 +152,10 @@ const (
 
 	DraftRecommendation   = "В проекте нет отметки о приложении."
 	DraftSignatureMissing = "В проекте нет подписи."
+
+	EvalCoreUnavailable = "Живое ядро недоступно."
+	EvalLoginFailed     = "Не удалось войти в живое ядро."
+	EvalRequestFailed   = "Запрос к живому ядру не выполнен."
+	EvalPointsLine      = "верных пунктов: %d из %d\n"
+	EvalFallbackLine    = "fallback: %d из %d\n"
 )

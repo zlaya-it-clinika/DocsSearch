@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"docssearch/core/internal/blank"
-	"docssearch/core/internal/draftcheck"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
@@ -38,6 +37,8 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("GET /documents", api.serve_ListDocuments)
 	routeMux.HandleFunc("POST /documents", api.serve_UploadDocument)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", api.serve_DocumentFile)
+	routeMux.HandleFunc("GET /blanks/{blankId}/file", api.serve_BlankFile)
+	routeMux.HandleFunc("GET /drafts/{draftId}/file", api.serve_DraftFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", api.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /users", api.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", api.serve_CreateUser)
@@ -195,6 +196,38 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		apply_BlankStep(session, step)
 		reply = reply_FromBlank(step)
 		documents = []shownDocument{}
+		if step.Ready && len(step.DraftDocx) > 0 && reply.Template != nil {
+			draftID, saveError := api.store.Save_DraftFile(request.Context(), account.UserID, step.BlankID+".docx", step.DraftDocx)
+			if saveError != nil {
+				write_LiveError(responseWriter, saveError)
+				return
+			}
+			reply.Template.DraftLink = draft_FileLink(draftID)
+		}
+	} else if strings.Contains(strings.ToLower(body.Text), texts.PhrasePrepare) {
+		lines, listError := api.store.List_VisibleDocuments(request.Context(), token, "")
+		if listError != nil {
+			write_LiveError(responseWriter, listError)
+			return
+		}
+		var prepareError error
+		reply, prepareError = reply_ForPreparation(instruction_Source(lines))
+		if prepareError != nil {
+			write_DraftError(responseWriter, prepareError)
+			return
+		}
+		documents = shown_FromCitations(reply.Citations)
+		reply = reply_WithContacts(reply, nil)
+		if embedding, embedError := api.store.Embed_Question(body.Text); embedError == nil {
+			contactChunk, found, contactError := api.store.Find_ContactChunk(request.Context(), embedding, account.UserID, account.AccessLevel)
+			if contactError != nil {
+				write_LiveError(responseWriter, contactError)
+				return
+			}
+			if found {
+				reply = reply_WithContacts(reply, contacts_ForText(contactChunk.Content, body.Text))
+			}
+		}
 	} else {
 		historyRaw, historyError := api.store.List_SessionMessages(request.Context(), token, request.PathValue("sessionId"))
 		if historyError != nil {
@@ -216,6 +249,18 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		if replyError != nil {
 			write_LiveError(responseWriter, replyError)
 			return
+		}
+		if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
+			contactChunk, found, contactError := api.store.Find_ContactChunk(request.Context(), embedding, account.UserID, account.AccessLevel)
+			if contactError != nil {
+				write_LiveError(responseWriter, contactError)
+				return
+			}
+			contactList := []replyContact{}
+			if found {
+				contactList = contacts_ForText(contactChunk.Content, body.Text)
+			}
+			reply = reply_WithContacts(reply, contactList)
 		}
 	}
 	userBody, err := json.Marshal(userLine{Role: "user", Text: body.Text})
@@ -364,6 +409,43 @@ func (api *liveAPI) serve_UploadDocument(responseWriter http.ResponseWriter, req
 		Edition:    result.Edition,
 		Scope:      result.Scope,
 	})
+}
+
+func (api *liveAPI) serve_BlankFile(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if _, err := api.store.Find_AccountByToken(request.Context(), token); err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	fileName, body, err := blank.Read_ModuleFile(request.PathValue("blankId"))
+	if err != nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return
+	}
+	write_FileResponse(responseWriter, fileName, texts.DocxContentType, body)
+}
+
+func (api *liveAPI) serve_DraftFile(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	account, err := api.store.Find_AccountByToken(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	file, err := api.store.Read_DraftFile(request.Context(), account.UserID, request.PathValue("draftId"))
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_FileResponse(responseWriter, file.FileName, file.ContentType, file.Body)
 }
 
 func (api *liveAPI) serve_DocumentFile(responseWriter http.ResponseWriter, request *http.Request) {
@@ -545,21 +627,7 @@ func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request
 		write_LiveError(responseWriter, err)
 		return
 	}
-	source := draftcheck.Source{
-		Title:   texts.SeedInstructionTitle,
-		Edition: texts.EditionDefault,
-		Scope:   texts.ScopeGlobal,
-	}
-	for _, line := range lines {
-		if strings.Contains(strings.ToLower(line.Title), "инструкц") {
-			source.DocumentID = line.DocumentID
-			source.Title = line.Title
-			source.Edition = line.Edition
-			source.Scope = line.Scope
-			break
-		}
-	}
-	recommendations, err := recommendations_ForDraft(fileName, body, source)
+	recommendations, err := recommendations_ForDraft(fileName, body, instruction_Source(lines))
 	if err != nil {
 		write_DraftError(responseWriter, err)
 		return

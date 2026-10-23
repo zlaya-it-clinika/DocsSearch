@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/config"
 	"docssearch/core/internal/texts"
 )
@@ -37,6 +38,9 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	if answer.Citations[0].OriginalLink != "/documents/doc-1/file#p3.2" || answer.Citations[0].DocumentID != texts.SeedInstructionID || answer.Citations[0].Scope != texts.ScopeGlobal {
 		t.Fatalf("link %+v", answer.Citations[0])
 	}
+	if answer.Contacts == nil || len(*answer.Contacts) != 0 {
+		t.Fatalf("contacts %+v", answer.Contacts)
+	}
 	if answer.Role != "" {
 		t.Fatalf("post message should omit role, got %s", answer.Role)
 	}
@@ -53,15 +57,15 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	clarify := postMessage(t, handler, employeeToken, sessionID, "Уточни тип документа")
-	if clarify.Kind != texts.KindClarify || len(clarify.Citations) != 0 || clarify.RelevancePercent != 0 {
+	if clarify.Kind != texts.KindClarify || len(clarify.Citations) != 0 || clarify.RelevancePercent != 0 || clarify.Contacts != nil {
 		t.Fatalf("clarify %+v", clarify)
 	}
 	fallback := postMessage(t, handler, employeeToken, sessionID, "Этого не найдено")
-	if fallback.Kind != texts.KindFallback || len(fallback.Citations) != 0 {
+	if fallback.Kind != texts.KindFallback || len(fallback.Citations) != 0 || fallback.Contacts == nil || len(*fallback.Contacts) != 0 {
 		t.Fatalf("fallback %+v", fallback)
 	}
 	denied := postMessage(t, handler, employeeToken, sessionID, "Нет доступа к регламенту")
-	if denied.Kind != texts.KindAccessDenied {
+	if denied.Kind != texts.KindAccessDenied || denied.Contacts != nil {
 		t.Fatalf("denied %+v", denied)
 	}
 
@@ -71,8 +75,16 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 		t.Fatalf("unknown template %+v", unknownTemplate)
 	}
 	field := postMessage(t, handler, employeeToken, templateSession, "Нужен модуль распоряжения о создании рабочей группы")
-	if field.Kind != texts.KindTemplateField || field.Template == nil || field.Template.Field != "1" || !strings.Contains(field.Template.Title, "рабочей группы") {
+	if field.Kind != texts.KindTemplateField || field.Contacts != nil || field.Template == nil || field.Template.Field != "1" || !strings.Contains(field.Template.Title, "рабочей группы") || field.Template.FileLink != "/blanks/order-work-group/file" {
 		t.Fatalf("template field %+v", field)
+	}
+	blankFile := doRaw(t, handler, http.MethodGet, field.Template.FileLink, employeeToken, nil, "")
+	if blankFile.Code != http.StatusOK || !strings.HasPrefix(blankFile.Body.String(), "PK") {
+		t.Fatalf("blank file %d", blankFile.Code)
+	}
+	missingBlank := doRaw(t, handler, http.MethodGet, "/blanks/missing/file", employeeToken, nil, "")
+	if missingBlank.Code != http.StatusNotFound {
+		t.Fatalf("missing blank %d", missingBlank.Code)
 	}
 	next := postMessage(t, handler, employeeToken, templateSession, "не найдено")
 	if next.Kind != texts.KindTemplateField || next.Template == nil || next.Template.Field == "1" {
@@ -82,11 +94,23 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	for guard := 0; reply.Kind == texts.KindTemplateField && guard < 20; guard++ {
 		reply = postMessage(t, handler, employeeToken, templateSession, "значение")
 	}
-	if reply.Kind != texts.KindTemplateReady || reply.Template == nil || reply.RelevancePercent != 0 || len(reply.Citations) != 0 {
+	if reply.Kind != texts.KindTemplateReady || reply.Template == nil || reply.RelevancePercent != 0 || len(reply.Citations) != 0 || reply.Template.FileLink != "/blanks/order-work-group/file" || reply.Template.DraftLink == "" {
 		t.Fatalf("template ready %+v", reply)
 	}
 	if !strings.Contains(reply.Template.DraftText, "не найдено") || !strings.Contains(reply.Template.DraftText, "проверка архива") || strings.Contains(reply.Template.DraftText, "[1]") {
 		t.Fatalf("draft %s", reply.Template.DraftText)
+	}
+	draftFile := doRaw(t, handler, http.MethodGet, reply.Template.DraftLink, employeeToken, nil, "")
+	if draftFile.Code != http.StatusOK || !strings.HasPrefix(draftFile.Body.String(), "PK") {
+		t.Fatalf("draft file %d", draftFile.Code)
+	}
+	draftPlain, draftErr := chunk.Extract_DocumentText("draft.docx", draftFile.Body.Bytes())
+	if draftErr != nil || !strings.Contains(draftPlain, "не найдено") || strings.Contains(strings.ToLower(draftPlain), "примечани") {
+		t.Fatalf("draft docx %v %s", draftErr, draftPlain)
+	}
+	foreignDraft := doRaw(t, handler, http.MethodGet, reply.Template.DraftLink, adminToken, nil, "")
+	if foreignDraft.Code != http.StatusForbidden {
+		t.Fatalf("foreign draft %d", foreignDraft.Code)
 	}
 
 	historyRec := doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil)
@@ -493,6 +517,47 @@ func hasDocument(documents []documentResponse, documentID string) bool {
 		}
 	}
 	return false
+}
+
+func TestStubPrepareDocumentListsRequisites(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	sessionID := createSession(t, handler, employeeToken)
+	answer := postMessage(t, handler, employeeToken, sessionID, "Как подготовить документ?")
+	if answer.Kind != texts.KindAnswer || answer.Text != texts.PrepareAnswerText || len(answer.Citations) != 2 {
+		t.Fatalf("prepare %+v", answer)
+	}
+	if answer.Citations[0].Paragraph != texts.PrepareParagraphComposition || !strings.Contains(answer.Citations[0].OriginalLink, "#p8.1") || answer.Citations[0].DocumentID != texts.SeedInstructionID || strings.TrimSpace(answer.Citations[0].Quote) == "" {
+		t.Fatalf("composition %+v", answer.Citations[0])
+	}
+	if answer.Citations[1].Paragraph != texts.PrepareParagraphList || !strings.Contains(answer.Citations[1].OriginalLink, "#p8.2") {
+		t.Fatalf("list %+v", answer.Citations[1])
+	}
+	blank := postMessage(t, handler, employeeToken, sessionID, "Как подготовить модуль распоряжения о создании рабочей группы")
+	if blank.Kind != texts.KindTemplateField {
+		t.Fatalf("blank wins %+v", blank)
+	}
+}
+
+func TestStubContactsFollowQuestion(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	directory := "Центр документационного обеспечения\nтелефон 1-10-20\n\nУправление информационных технологий\nпочта wifi@bank\n"
+	uploadDocument(t, handler, employeeToken, "contacts.txt", directory, "Контакты подразделений", "1.0", "1")
+	sessionID := createSession(t, handler, employeeToken)
+
+	answer := postMessage(t, handler, employeeToken, sessionID, "Куда писать на wifi")
+	if answer.Kind != texts.KindAnswer || answer.Contacts == nil || len(*answer.Contacts) != 1 || (*answer.Contacts)[0].Department != "Управление информационных технологий" || (*answer.Contacts)[0].Channel != "почта wifi@bank" {
+		t.Fatalf("answer contacts %+v", answer.Contacts)
+	}
+	fallback := postMessage(t, handler, employeeToken, sessionID, "Этого не найдено")
+	if fallback.Kind != texts.KindFallback || fallback.Contacts == nil || len(*fallback.Contacts) != 1 || (*fallback.Contacts)[0].Department != "Центр документационного обеспечения" {
+		t.Fatalf("fallback contacts %+v", fallback)
+	}
+	clarifyResponse := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]string{"text": "уточни"})
+	if clarifyResponse.Code != http.StatusOK || strings.Contains(clarifyResponse.Body.String(), `"contacts"`) {
+		t.Fatalf("clarify body %s", clarifyResponse.Body.String())
+	}
 }
 
 func uploadDocument(t *testing.T, handler http.Handler, token, fileName, content, title, edition, accessLevel string) uploadResponse {

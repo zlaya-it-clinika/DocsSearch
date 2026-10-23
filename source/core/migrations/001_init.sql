@@ -73,11 +73,20 @@ CREATE TABLE IF NOT EXISTS id_counters (
 	value int NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS draft_files (
+	draft_id text PRIMARY KEY,
+	owner_user_id text NOT NULL REFERENCES users (user_id),
+	file_name text NOT NULL,
+	content_type text NOT NULL,
+	body bytea NOT NULL
+);
+
 INSERT INTO id_counters (name, value) VALUES
 	('user', 2),
 	('document', 1),
 	('session', 1),
-	('audit', 1)
+	('audit', 1),
+	('draft', 1)
 ON CONFLICT (name) DO NOTHING;
 
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT '';
