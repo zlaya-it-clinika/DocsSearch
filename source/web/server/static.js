@@ -23,6 +23,8 @@ const mimeByExtension = {
 const appShellFile = 'index.html';
 const embedShellFile = 'embed.html';
 const loaderFile = 'widget.js';
+// Файлы, которые страница портала грузит с нашего сервера: скрипт виджета и логотип для его кнопки
+const crossOriginFiles = new Set([loaderFile, 'logo-192.png', 'favicon-32.png']);
 
 function resolve_PublicPath(urlPath) {
 	let decoded;
@@ -42,7 +44,7 @@ function resolve_PublicPath(urlPath) {
 }
 
 function pick_HeaderKind(relativePath) {
-	if (relativePath === loaderFile) {
+	if (crossOriginFiles.has(relativePath)) {
 		return 'loader';
 	}
 	if (relativePath === embedShellFile) {

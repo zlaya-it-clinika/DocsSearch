@@ -2,7 +2,7 @@
 import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_Unauthorized, set_CsrfToken } from './api.js';
 import { create_ChatHistory } from './chat-history.js';
 import { show_Toast } from './components/toast.js';
-import { create_Element, create_EmptyBlock, create_Icon, create_IconButton } from './lib/dom.js';
+import { create_Element, create_EmptyBlock, create_Icon, create_IconButton, create_Logo } from './lib/dom.js';
 import { apply_Theme, get_Theme, read_Preference, remove_Preference, write_Preference } from './preferences.js';
 import { check_IsPending } from './roles.js';
 import { AppTexts, AuthTexts, PendingTexts, WidgetTexts, get_ErrorText } from './texts.js';
@@ -30,7 +30,7 @@ const newChatButton = create_IconButton('new-chat', WidgetTexts.newChat, () => s
 root.replaceChildren(create_Element('div', { className: 'embed-root' }, [
 	create_Element('header', { className: 'embed-header' }, [
 		create_Element('span', { className: 'brand' }, [
-			create_Element('span', { className: 'brand-mark' }, [create_Icon('logo')]),
+			create_Logo(),
 			create_Element('span', { text: WidgetTexts.title }),
 		]),
 		newChatButton,

@@ -41,6 +41,19 @@
 	text-decoration: none;
 }
 
+.brand-logo {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	image-rendering: pixelated;
+	user-select: none;
+}
+
+.auth-header .brand-logo {
+	width: 56px;
+	height: 56px;
+}
+
 .brand-mark {
 	display: inline-flex;
 	align-items: center;

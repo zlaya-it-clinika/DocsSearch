@@ -32,6 +32,7 @@
 		'  display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 1px rgba(255,255,255,.16), 0 6px 20px rgba(0,0,0,.18); }',
 		'.launcher:hover { background: #333; }',
 		'.launcher:focus-visible { outline: 2px solid #4c7ce0; outline-offset: 3px; }',
+		'.launcher-logo { width: 34px; height: 34px; display: block; image-rendering: pixelated; pointer-events: none; }',
 		'.launcher svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }',
 		'.panel { position: fixed; bottom: 84px; ' + position + ': 20px; z-index: 2147483000; width: 400px; height: 640px;',
 		'  max-width: calc(100vw - 40px); max-height: calc(100vh - 110px); border-radius: 18px; overflow: hidden;',
@@ -41,6 +42,7 @@
 		'@media (max-width: 520px) { .panel { inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; } }',
 	].join('\n');
 
+	// Запасная иконка, если портал не разрешает картинки с нашего сервера
 	var chatIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><circle cx="11.5" cy="13.5" r="2.75"/><path d="m13.5 15.5 2 2"/></svg>';
 	var closeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
@@ -72,9 +74,29 @@
 
 	var frame = null;
 
+	// Пиксельный логотип DocsSearch на кнопке
+	var logoFailed = false;
+	var logoImage = document.createElement('img');
+	logoImage.className = 'launcher-logo';
+	logoImage.src = serverOrigin + '/logo-192.png';
+	logoImage.alt = '';
+	logoImage.setAttribute('aria-hidden', 'true');
+	logoImage.addEventListener('error', function () {
+		logoFailed = true;
+		if (launcher.getAttribute('aria-expanded') === 'false') {
+			launcher.innerHTML = chatIcon;
+		}
+	});
+
 	function render_Launcher(isOpen) {
 		// Иконки - статичная разметка загрузчика, данных пользователя здесь нет
-		launcher.innerHTML = isOpen ? closeIcon : chatIcon;
+		if (isOpen) {
+			launcher.innerHTML = closeIcon;
+		} else if (logoFailed) {
+			launcher.innerHTML = chatIcon;
+		} else {
+			launcher.replaceChildren(logoImage);
+		}
 		launcher.setAttribute('aria-label', isOpen ? loaderTexts.close : buttonLabel);
 		launcher.title = isOpen ? loaderTexts.close : buttonLabel;
 		launcher.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
