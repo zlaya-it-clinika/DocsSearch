@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"docssearch/core/internal/blank"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
@@ -180,20 +181,18 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	account, templateStep, err := api.store.Load_SessionForMessage(request.Context(), token, request.PathValue("sessionId"))
+	account, _, templateState, err := api.store.Load_SessionForMessage(request.Context(), token, request.PathValue("sessionId"))
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	session := &sessionRecord{templateStep: templateStep}
+	session := &sessionRecord{blankFill: decode_FillState(templateState)}
 	var reply assistantReply
 	var documents []shownDocument
-	if templateStep == templateStepAsked {
-		reply = build_AssistantReply(session, body.Text)
-		documents = []shownDocument{}
-	} else if strings.Contains(strings.ToLower(body.Text), texts.PhraseTemplate) {
-		session.templateStep = templateStepAsked
-		reply = build_TemplateFieldReply()
+	step, handled := blank.Advance_Blank(session.blankFill, body.Text)
+	if handled {
+		apply_BlankStep(session, step)
+		reply = reply_FromBlank(step)
 		documents = []shownDocument{}
 	} else {
 		historyRaw, historyError := api.store.List_SessionMessages(request.Context(), token, request.PathValue("sessionId"))
@@ -238,7 +237,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
-	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text, build_SessionTitle(body.Text))
+	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, encode_FillState(session.blankFill), userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text, build_SessionTitle(body.Text))
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return

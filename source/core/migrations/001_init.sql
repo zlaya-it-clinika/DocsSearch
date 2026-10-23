@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	session_id text PRIMARY KEY,
 	owner_user_id text NOT NULL REFERENCES users (user_id),
 	template_step int NOT NULL DEFAULT 0,
+	template_state jsonb NOT NULL DEFAULT '{}'::jsonb,
 	title text NOT NULL DEFAULT '',
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
@@ -82,6 +83,7 @@ ON CONFLICT (name) DO NOTHING;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS template_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'global';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';

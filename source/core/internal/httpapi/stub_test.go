@@ -66,13 +66,27 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	templateSession := createSession(t, handler, employeeToken)
-	field := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
-	if field.Kind != texts.KindTemplateField || field.Template == nil || field.Template.Field != texts.TemplateField {
+	unknownTemplate := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
+	if unknownTemplate.Kind != texts.KindAnswer {
+		t.Fatalf("unknown template %+v", unknownTemplate)
+	}
+	field := postMessage(t, handler, employeeToken, templateSession, "Нужен модуль распоряжения о создании рабочей группы")
+	if field.Kind != texts.KindTemplateField || field.Template == nil || field.Template.Field != "1" || !strings.Contains(field.Template.Title, "рабочей группы") {
 		t.Fatalf("template field %+v", field)
 	}
-	ready := postMessage(t, handler, employeeToken, templateSession, "не найдено")
-	if ready.Kind != texts.KindTemplateReady || ready.Template == nil || ready.Template.DraftText != texts.TemplateDraftText {
-		t.Fatalf("template ready %+v", ready)
+	next := postMessage(t, handler, employeeToken, templateSession, "не найдено")
+	if next.Kind != texts.KindTemplateField || next.Template == nil || next.Template.Field == "1" {
+		t.Fatalf("next field %+v", next)
+	}
+	reply := postMessage(t, handler, employeeToken, templateSession, "проверка архива")
+	for guard := 0; reply.Kind == texts.KindTemplateField && guard < 20; guard++ {
+		reply = postMessage(t, handler, employeeToken, templateSession, "значение")
+	}
+	if reply.Kind != texts.KindTemplateReady || reply.Template == nil || reply.RelevancePercent != 0 || len(reply.Citations) != 0 {
+		t.Fatalf("template ready %+v", reply)
+	}
+	if !strings.Contains(reply.Template.DraftText, "не найдено") || !strings.Contains(reply.Template.DraftText, "проверка архива") || strings.Contains(reply.Template.DraftText, "[1]") {
+		t.Fatalf("draft %s", reply.Template.DraftText)
 	}
 
 	historyRec := doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil)

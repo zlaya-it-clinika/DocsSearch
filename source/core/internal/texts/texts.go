@@ -54,7 +54,7 @@ const (
 	DocsHintMe            = "Текущий пользователь без токена в теле ответа."
 	DocsHintCreateSession = "Новая сессия. Ее id подставится в запросы истории и сообщений."
 	DocsHintHistory       = "История сессии."
-	DocsHintMessage       = "Фразы заглушки: нет доступа, не найдено, уточни, шаблон. Иначе обычный ответ."
+	DocsHintMessage       = "Фразы заглушки: нет доступа, не найдено, уточни. Запрос с названием модуля начинает бланк."
 	DocsHintListDocuments = "Только документы не выше уровня пользователя."
 	DocsHintUpload        = "Загрузка в базу. Файл в заглушке не индексируется, но появляется в списке."
 	DocsHintFile          = "Файл оригинала. doc-2 закрыт для user."
@@ -86,6 +86,10 @@ const (
 	PhraseNotFound     = "не найдено"
 	PhraseClarify      = "уточни"
 	PhraseTemplate     = "шаблон"
+
+	BlankSkipNo   = "нет"
+	BlankSkipPass = "пропустить"
+	BlankSkipDash = "-"
 
 	StatusAccepted = "accepted"
 
@@ -127,13 +131,7 @@ const (
 	FallbackText     = "В базе знаний нет сведений для ответа на этот вопрос."
 	AccessDeniedText = "Недостаточно прав для просмотра документов по этому запросу."
 
-	TemplateID         = "memo"
-	TemplateTitle      = "Служебная записка"
-	TemplateField      = "addressee"
-	TemplateFieldLabel = "Адресат"
-	TemplateFieldText  = "Укажите адресата."
-	TemplateReadyText  = "Черновик собран."
-	TemplateDraftText  = "Текст черновика."
+	TemplateReadyText = "Черновик собран."
 
 	LiveAnswerPrompt   = "Отвечай только по переданным фрагментам инструкций. Не добавляй факты, которых в них нет. Коротко, по-русски."
 	LiveClarifyPrompt  = "Вопрос подходит к разным документам. Задай один короткий уточняющий вопрос, о каком документе речь. Не отвечай по существу и не добавляй фактов."

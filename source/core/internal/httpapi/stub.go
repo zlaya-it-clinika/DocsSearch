@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"docssearch/core/internal/blank"
 	"docssearch/core/internal/texts"
 )
 
@@ -52,6 +54,7 @@ type sessionRecord struct {
 	updatedAt    time.Time
 	messages     []any
 	templateStep int
+	blankFill    blank.FillState
 }
 
 type citation struct {
@@ -858,11 +861,12 @@ func (document *documentRecord) line(viewer *userRecord, ownerName string) docum
 	}
 }
 
-// Следующая реплика после вопроса по полю бланка завершает черновик.
+// Пока бланк заполняется, реплика - ответ на поле, а не новая фраза заглушки.
 func build_AssistantReply(session *sessionRecord, text string) assistantReply {
-	if session.templateStep == templateStepAsked {
-		session.templateStep = templateStepIdle
-		return build_TemplateReadyReply()
+	step, handled := blank.Advance_Blank(session.blankFill, text)
+	if handled {
+		apply_BlankStep(session, step)
+		return reply_FromBlank(step)
 	}
 	lower := strings.ToLower(text)
 	switch {
@@ -872,12 +876,57 @@ func build_AssistantReply(session *sessionRecord, text string) assistantReply {
 		return build_PlainReply(texts.KindFallback, texts.FallbackText)
 	case strings.Contains(lower, texts.PhraseClarify):
 		return build_PlainReply(texts.KindClarify, texts.ClarifyText)
-	case strings.Contains(lower, texts.PhraseTemplate):
-		session.templateStep = templateStepAsked
-		return build_TemplateFieldReply()
 	default:
 		return build_AnswerReply()
 	}
+}
+
+func apply_BlankStep(session *sessionRecord, step blank.Step) {
+	session.blankFill = step.State
+	session.templateStep = templateStepIdle
+	if step.State.BlankID != "" {
+		session.templateStep = templateStepAsked
+	}
+}
+
+func reply_FromBlank(step blank.Step) assistantReply {
+	if step.Ready {
+		reply := build_PlainReply(texts.KindTemplateReady, texts.TemplateReadyText)
+		reply.Template = &templateState{
+			ID:        step.BlankID,
+			Title:     step.Title,
+			DraftText: step.DraftText,
+		}
+		return reply
+	}
+	reply := build_PlainReply(texts.KindTemplateField, step.Question)
+	reply.Template = &templateState{
+		ID:         step.BlankID,
+		Title:      step.Title,
+		Field:      step.Field,
+		FieldLabel: step.FieldLabel,
+	}
+	return reply
+}
+
+func encode_FillState(state blank.FillState) []byte {
+	if state.BlankID == "" && len(state.Answers) == 0 && len(state.Skipped) == 0 {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return []byte("{}")
+	}
+	return raw
+}
+
+func decode_FillState(raw []byte) blank.FillState {
+	var state blank.FillState
+	if len(raw) == 0 {
+		return state
+	}
+	_ = json.Unmarshal(raw, &state)
+	return state
 }
 
 func build_PlainReply(kind, text string) assistantReply {
@@ -906,27 +955,6 @@ func build_AnswerReply() assistantReply {
 			Scope:        texts.ScopeGlobal,
 		}},
 	}
-}
-
-func build_TemplateFieldReply() assistantReply {
-	reply := build_PlainReply(texts.KindTemplateField, texts.TemplateFieldText)
-	reply.Template = &templateState{
-		ID:         texts.TemplateID,
-		Title:      texts.TemplateTitle,
-		Field:      texts.TemplateField,
-		FieldLabel: texts.TemplateFieldLabel,
-	}
-	return reply
-}
-
-func build_TemplateReadyReply() assistantReply {
-	reply := build_PlainReply(texts.KindTemplateReady, texts.TemplateReadyText)
-	reply.Template = &templateState{
-		ID:        texts.TemplateID,
-		Title:     texts.TemplateTitle,
-		DraftText: texts.TemplateDraftText,
-	}
-	return reply
 }
 
 func build_OriginalFileLink(documentID, paragraph string) string {

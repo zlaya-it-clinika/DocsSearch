@@ -68,7 +68,7 @@ func (store *LiveStore) List_Sessions(ctx context.Context, token string) ([]Sess
 }
 
 func (store *LiveStore) List_SessionMessages(ctx context.Context, token, sessionID string) ([][]byte, error) {
-	if _, _, err := store.Load_SessionForMessage(ctx, token, sessionID); err != nil {
+	if _, _, _, err := store.Load_SessionForMessage(ctx, token, sessionID); err != nil {
 		return nil, err
 	}
 	rows, err := store.pool.Query(ctx, `
@@ -88,38 +88,42 @@ func (store *LiveStore) List_SessionMessages(ctx context.Context, token, session
 	return messages, rows.Err()
 }
 
-func (store *LiveStore) Load_SessionForMessage(ctx context.Context, token, sessionID string) (Account, int, error) {
+func (store *LiveStore) Load_SessionForMessage(ctx context.Context, token, sessionID string) (Account, int, []byte, error) {
 	account, err := store.Find_AccountByToken(ctx, token)
 	if err != nil {
-		return Account{}, 0, err
+		return Account{}, 0, nil, err
 	}
 	var ownerID string
 	var templateStep int
+	var templateState []byte
 	err = store.pool.QueryRow(ctx, `
-		SELECT owner_user_id, template_step FROM sessions WHERE session_id = $1`, sessionID).Scan(&ownerID, &templateStep)
+		SELECT owner_user_id, template_step, template_state FROM sessions WHERE session_id = $1`, sessionID).Scan(&ownerID, &templateStep, &templateState)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Account{}, 0, ErrNotFound
+		return Account{}, 0, nil, ErrNotFound
 	}
 	if err != nil {
-		return Account{}, 0, err
+		return Account{}, 0, nil, err
 	}
 	if ownerID != account.UserID {
-		return Account{}, 0, ErrAccessDenied
+		return Account{}, 0, nil, ErrAccessDenied
 	}
-	return account, templateStep, nil
+	return account, templateStep, templateState, nil
 }
 
-func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID string, templateStep int, userBody, assistantBody, auditDocuments []byte, userID, displayName, question, title string) error {
+func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID string, templateStep int, templateState, userBody, assistantBody, auditDocuments []byte, userID, displayName, question, title string) error {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	now := time.Now().UTC()
+	if len(templateState) == 0 {
+		templateState = []byte("{}")
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE sessions
-		SET template_step = $2, updated_at = $3, title = CASE WHEN title = '' THEN $4 ELSE title END
-		WHERE session_id = $1`, sessionID, templateStep, now, title); err != nil {
+		SET template_step = $2, template_state = $3::jsonb, updated_at = $4, title = CASE WHEN title = '' THEN $5 ELSE title END
+		WHERE session_id = $1`, sessionID, templateStep, string(templateState), now, title); err != nil {
 		return err
 	}
 	var position int
