@@ -29,6 +29,28 @@ function start_TestCore() {
 				response.writeHead(status, { 'Content-Type': 'application/json' });
 				response.end(JSON.stringify(payload));
 			};
+			if (request.url === '/auth/config') {
+				send(200, { onboarding: true, enableSignup: true, enableLdap: true, ldapLabel: 'CORP' });
+				return;
+			}
+			if (request.url === '/auth/signup') {
+				const parsed = JSON.parse(body);
+				if (parsed.email === 'taken@corp.local') {
+					send(409, { error: 'login_taken' });
+					return;
+				}
+				send(200, { token: testToken, userId: 'user-1', login: parsed.email, displayName: parsed.displayName, accessLevel: 2, role: 'admin' });
+				return;
+			}
+			if (request.url === '/auth/ldap') {
+				const parsed = JSON.parse(body);
+				if (parsed.password !== 'domain-pass') {
+					send(401, { error: 'invalid_credentials' });
+					return;
+				}
+				send(200, { token: testToken, userId: 'user-2', login: 'ivanov@corp.local', displayName: 'Иванов', accessLevel: 1, role: 'pending' });
+				return;
+			}
 			if (request.url === '/auth/login') {
 				const parsed = JSON.parse(body);
 				if (parsed.password !== 'right') {
@@ -53,6 +75,10 @@ function start_TestCore() {
 			if (request.url === '/documents/doc-1' && request.method === 'DELETE') {
 				response.writeHead(204);
 				response.end();
+				return;
+			}
+			if (request.url === '/auth/admin/config') {
+				send(200, request.method === 'POST' ? JSON.parse(body) : { enableSignup: true, defaultUserRole: 'pending', showAdminDetails: true });
 				return;
 			}
 			if (request.url === '/drafts/check') {
@@ -184,6 +210,81 @@ test('без сессии прокси отвечает 401, вход ядра �
 	const { cookie } = await login_AsTestUser();
 	const hiddenRoute = await fetch(`${webUrl}/api/docs`, { headers: { cookie } });
 	assert.equal(hiddenRoute.status, 404);
+});
+
+test('настройки экрана входа отдаются без сессии', async () => {
+	const response = await fetch(`${webUrl}/api/auth/config`);
+	assert.equal(response.status, 200);
+	const payload = await response.json();
+	assert.equal(payload.onboarding, true);
+	assert.equal(payload.ldapLabel, 'CORP');
+	assert.equal(coreRequests.at(-1).authorization, undefined);
+});
+
+test('регистрация создаёт сессию веба и не отдаёт токен ядра', async () => {
+	const response = await fetch(`${webUrl}/api/auth/signup`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: ' boss@corp.local ', password: 'secret', displayName: ' Главный ', extra: 'drop-me' }),
+	});
+	assert.equal(response.status, 200);
+	const payload = await response.json();
+	assert.equal(payload.user.role, 'admin');
+	assert.equal(payload.user.token, undefined);
+	assert.match(response.headers.get('set-cookie'), /HttpOnly/);
+	assert.deepEqual(JSON.parse(coreRequests.at(-1).body), { email: 'boss@corp.local', password: 'secret', displayName: 'Главный' });
+
+	const invalid = await fetch(`${webUrl}/api/auth/signup`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'boss@corp.local', password: 'secret' }),
+	});
+	assert.equal(invalid.status, 400);
+	const taken = await fetch(`${webUrl}/api/auth/signup`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'taken@corp.local', password: 'secret', displayName: 'Двойник' }),
+	});
+	assert.equal(taken.status, 409);
+	assert.equal((await taken.json()).error, 'login_taken');
+});
+
+test('вход через LDAP создаёт сессию, роль pending доходит до браузера', async () => {
+	const response = await fetch(`${webUrl}/api/auth/ldap`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ login: 'ivanov', password: 'domain-pass' }),
+	});
+	assert.equal(response.status, 200);
+	const payload = await response.json();
+	assert.equal(payload.user.role, 'pending');
+	assert.equal(coreRequests.at(-1).url, '/auth/ldap');
+	const cookie = response.headers.get('set-cookie').split(';')[0];
+	const session = await fetch(`${webUrl}/api/auth/session`, { headers: { cookie } });
+	assert.equal(session.status, 200);
+});
+
+test('настройки входа администратора проксируются с токеном и CSRF', async () => {
+	const { cookie, payload } = await login_AsTestUser();
+	const read = await fetch(`${webUrl}/api/auth/admin/config`, { headers: { cookie } });
+	assert.equal(read.status, 200);
+	assert.equal((await read.json()).defaultUserRole, 'pending');
+	assert.equal(coreRequests.at(-1).authorization, `Bearer ${testToken}`);
+
+	const noCsrf = await fetch(`${webUrl}/api/auth/admin/config`, { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' });
+	assert.equal(noCsrf.status, 403);
+	const saved = await fetch(`${webUrl}/api/auth/admin/config`, {
+		method: 'POST',
+		headers: { cookie, 'Content-Type': 'application/json', 'X-CSRF-Token': payload.csrfToken },
+		body: JSON.stringify({ enableSignup: false }),
+	});
+	assert.equal(saved.status, 200);
+	assert.equal((await saved.json()).enableSignup, false);
+
+	const anonymous = await fetch(`${webUrl}/api/auth/admin/config`);
+	assert.equal(anonymous.status, 401);
+	const unknownAuthRoute = await fetch(`${webUrl}/api/auth/anything`, { headers: { cookie } });
+	assert.equal(unknownAuthRoute.status, 404);
 });
 
 test('файл проходит потоком, слишком большой файл режется', async () => {

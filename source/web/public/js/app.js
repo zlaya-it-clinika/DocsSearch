@@ -1,13 +1,14 @@
 // Точка входа страницы: настройки, проверка сессии, маршруты.
-import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_Unauthorized, set_CsrfToken } from './api.js';
+import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_AccountPending, on_Unauthorized, set_CsrfToken } from './api.js';
 import { show_Toast } from './components/toast.js';
 import { create_Button, create_Element, create_Icon } from './lib/dom.js';
 import { apply_Theme, get_Theme } from './preferences.js';
-import { check_IsAdmin } from './roles.js';
+import { check_IsAdmin, check_IsPending } from './roles.js';
 import { define_NotFound, define_Route, navigate_To, start_Router } from './router.js';
 import { appState, update_State } from './state.js';
-import { AdminTexts, AppTexts, AuthTexts, get_ErrorText } from './texts.js';
+import { AdminTexts, AppTexts, AuthTexts, PendingTexts, get_ErrorText } from './texts.js';
 import { create_LoginView } from './views/login.js';
+import { create_PendingView } from './views/pending.js';
 import { create_Shell } from './views/shell.js';
 
 const root = document.getElementById('app');
@@ -57,11 +58,41 @@ function ensure_Shell() {
 	return shell;
 }
 
+// Ожидающий подтверждения видит только экран ожидания, по какому бы адресу ни пришёл
+function show_Pending() {
+	shell = null;
+	const view = create_PendingView({ onRecheck: recheck_Session, onLogout: handle_Logout });
+	root.replaceChildren(view.element);
+	view.focus();
+}
+
+// «Проверить снова»: профиль у ядра свежий, роль мог сменить администратор
+async function recheck_Session() {
+	try {
+		apply_Session(await fetch_AuthSession());
+	} catch (error) {
+		if (error.status !== 401) {
+			show_Toast(get_ErrorText(error), 'error');
+		}
+		return;
+	}
+	if (check_IsPending(appState.user, appState.config)) {
+		show_Toast(PendingTexts.stillPending, 'info');
+		return;
+	}
+	const path = window.location.pathname === '/login' ? '/' : window.location.pathname;
+	navigate_To(path, { replace: true });
+}
+
 // Маршруты требуют входа: без пользователя уводим на экран входа
 function require_User(handler) {
 	return (params) => {
 		if (!appState.user) {
 			navigate_To('/login', { replace: true });
+			return;
+		}
+		if (check_IsPending(appState.user, appState.config)) {
+			show_Pending();
 			return;
 		}
 		handler(params);
@@ -116,6 +147,21 @@ async function boot() {
 		reset_Session();
 		navigate_To('/login', { replace: true });
 		show_Toast(AuthTexts.sessionExpired, 'info');
+	});
+
+	// Администратор вернул учётную запись в ожидание, пока сотрудник работал
+	on_AccountPending(async () => {
+		if (!appState.user || check_IsPending(appState.user, appState.config)) {
+			return;
+		}
+		try {
+			apply_Session(await fetch_AuthSession());
+		} catch {
+			return;
+		}
+		if (check_IsPending(appState.user, appState.config)) {
+			show_Pending();
+		}
 	});
 
 	define_Route('/login', show_Login);

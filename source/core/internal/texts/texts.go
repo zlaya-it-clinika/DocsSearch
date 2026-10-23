@@ -8,8 +8,9 @@ const (
 	KindTemplateReady = "template_ready"
 	KindAccessDenied  = "access_denied"
 
-	RoleAdmin = "admin"
-	RoleUser  = "user"
+	RoleAdmin   = "admin"
+	RoleUser    = "user"
+	RolePending = "pending"
 
 	ScopeGlobal   = "global"
 	ScopePersonal = "personal"
@@ -25,6 +26,14 @@ const (
 	ErrorEmbedSize          = "embed_size_mismatch"
 	ErrorEmbedUnavailable   = "embed_unavailable"
 	ErrorStore              = "store_unavailable"
+	ErrorSignupDisabled     = "signup_disabled"
+	ErrorAccountPending     = "account_pending"
+	ErrorInvalidEmail       = "invalid_email"
+	ErrorLdapDisabled       = "ldap_disabled"
+	ErrorLdapUnavailable    = "ldap_unavailable"
+	ErrorLdapEmailMissing   = "ldap_email_missing"
+
+	DefaultLdapLabel = "LDAP"
 
 	LiveDatabaseMissing = "Для API_MODE=live нужен DATABASE_URL."
 	LiveDatabaseConnect = "Не удалось подключиться к PostgreSQL."
@@ -42,7 +51,7 @@ const (
 	DocsMissingHint   = "Добавьте пароль в .env рядом с сервером и перезапустите его."
 
 	DocsConsoleTitle     = "DocsSearch API"
-	DocsConsoleLead      = "Запросы уходят на этот же сервер. В заглушке: user / user и admin / admin."
+	DocsConsoleLead      = "Запросы уходят на этот же сервер. В заглушке: user / user и admin / admin, если STUB_SEED_USERS не false. В live первая регистрация создает администратора."
 	DocsLogoutButton     = "Выйти"
 	DocsTokenLabel       = "Токен API, заголовок Authorization"
 	DocsTokenPlaceholder = "Появится после POST /auth/login"
@@ -59,27 +68,70 @@ const (
 	DocsHintUpload        = "Загрузка в базу. Файл в заглушке не индексируется, но появляется в списке."
 	DocsHintFile          = "Файл оригинала. doc-2 закрыт для user."
 	DocsHintUsers         = "Список учетных записей. Нужен уровень 2."
-	DocsHintCreateUser    = "Создание учетной записи. Нужен уровень 2."
-	DocsHintPatchUser     = "Смена имени и уровня. Нужен уровень 2."
+	DocsHintCreateUser    = "Создание учетной записи. Нужен уровень 2. role: pending, user или admin."
+	DocsHintPatchUser     = "Смена имени, почты, пароля, роли или уровня. Нужен уровень 2. Свою роль сменить нельзя."
 	DocsHintAudit         = "Журнал вопросов. Нужен уровень 2."
 	DocsHintDraft         = "Проверка черновика. В заглушке одна фиксированная рекомендация."
+
+	DocsHintAuthConfig     = "Без токена. onboarding=true, пока нет ни одной учетной записи."
+	DocsHintSignup         = "Регистрация по почте. Первая учетная запись становится администратором, остальные получают роль по умолчанию."
+	DocsHintLdapLogin      = "Вход доменной учетной записью. Нужен включенный LDAP."
+	DocsHintAdminDetails   = "Контакт администратора для экрана ожидания. Работает и для роли pending."
+	DocsHintSignupConfig   = "Регистрация и роль по умолчанию. Нужен уровень 2."
+	DocsHintSaveSignup     = "Изменить регистрацию. Можно передать часть полей."
+	DocsHintLdapToggle     = "Включен ли вход через LDAP. Нужен уровень 2."
+	DocsHintSaveLdapToggle = "Включить или выключить вход через LDAP."
+	DocsHintLdapServer     = "Подключение к LDAP. Пароль служебной учетной записи в ответ не попадает."
+	DocsHintSaveLdapServer = "Сохранить подключение. Пустой appDnPassword оставляет прежний пароль."
 
 	DocsExampleLoginBody = `{
   "login": "user",
   "password": "user"
 }`
+	DocsExampleSignupBody = `{
+  "email": "ivanov@corp.local",
+  "password": "secret",
+  "displayName": "Иванов Иван"
+}`
+	DocsExampleLdapLoginBody = `{
+  "login": "ivanov",
+  "password": "secret"
+}`
+	DocsExampleSignupConfigBody = `{
+  "enableSignup": true,
+  "defaultUserRole": "pending",
+  "showAdminDetails": true
+}`
+	DocsExampleLdapToggleBody = `{
+  "enableLdap": true
+}`
+	DocsExampleLdapServerBody = `{
+  "label": "Active Directory",
+  "host": "dc01.corp.local",
+  "port": 636,
+  "attributeForMail": "mail",
+  "attributeForUsername": "sAMAccountName",
+  "appDn": "CN=svc-docssearch,OU=Service,DC=corp,DC=local",
+  "appDnPassword": "",
+  "searchBase": "OU=Users,DC=corp,DC=local",
+  "searchFilters": "(objectClass=user)",
+  "useTls": true,
+  "certificatePath": "",
+  "validateCert": true,
+  "ciphers": "ALL"
+}`
 	DocsExampleMessageBody = `{
   "text": "Как зарегистрировать входящий документ?"
 }`
 	DocsExampleCreateUserBody = `{
-  "login": "clerk",
+  "login": "clerk@corp.local",
   "password": "clerk",
   "displayName": "Делопроизводитель",
-  "accessLevel": 1
+  "role": "user"
 }`
 	DocsExamplePatchUserBody = `{
   "displayName": "Сотрудник архива",
-  "accessLevel": 1
+  "role": "user"
 }`
 
 	PhraseAccessDenied = "нет доступа"

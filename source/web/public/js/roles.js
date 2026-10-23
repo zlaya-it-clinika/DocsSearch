@@ -1,15 +1,19 @@
-// Две роли: администратор и пользователь.
-// Ядро отдаёт числовой уровень доступа, порог администратора приходит из .env веб-сервера.
-// Если ядро начнёт отдавать поле role, оно имеет приоритет. Менять только здесь.
+// Роли как в open-webui: администратор, пользователь и ожидающий подтверждения.
+// Ядро отдаёт поле role. Если его нет (старое ядро), роль считается по уровню доступа,
+// порог администратора приходит из .env веб-сервера. Менять только здесь.
 import { RoleTexts } from './texts.js';
 
 export const Roles = Object.freeze({
 	admin: 'admin',
 	user: 'user',
+	pending: 'pending',
 });
 
+// Порядок для выбора роли в формах
+export const roleChoices = Object.freeze([Roles.pending, Roles.user, Roles.admin]);
+
 export function get_UserRole(user, config) {
-	if (user?.role === Roles.admin || user?.role === Roles.user) {
+	if (Object.values(Roles).includes(user?.role)) {
 		return user.role;
 	}
 	return (user?.accessLevel ?? 0) >= config.adminAccessLevel ? Roles.admin : Roles.user;
@@ -19,12 +23,31 @@ export function check_IsAdmin(user, config) {
 	return get_UserRole(user, config) === Roles.admin;
 }
 
+// Ожидающий подтверждения видит только экран ожидания
+export function check_IsPending(user, config) {
+	return Boolean(user) && get_UserRole(user, config) === Roles.pending;
+}
+
+// Следующая роль по нажатию на бейдж, как в open-webui: ожидает -> пользователь -> администратор -> ожидает
+export function get_NextRole(role) {
+	if (role === Roles.pending) {
+		return Roles.user;
+	}
+	if (role === Roles.user) {
+		return Roles.admin;
+	}
+	return Roles.pending;
+}
+
 export function get_AccessLevelForRole(role, config) {
 	return role === Roles.admin ? config.adminAccessLevel : config.userAccessLevel;
 }
 
 export function get_RoleLabel(role) {
-	return role === Roles.admin ? RoleTexts.admin : RoleTexts.user;
+	if (role === Roles.admin) {
+		return RoleTexts.admin;
+	}
+	return role === Roles.pending ? RoleTexts.pending : RoleTexts.user;
 }
 
 // Документ закрыт, если его уровень не ниже уровня администратора

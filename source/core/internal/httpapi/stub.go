@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/blank"
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/draftcheck"
@@ -34,6 +35,8 @@ type userRecord struct {
 	password    string
 	displayName string
 	accessLevel int
+	pending     bool
+	createdAt   time.Time
 }
 
 type documentRecord struct {
@@ -97,6 +100,7 @@ type userLine struct {
 type loginResponse struct {
 	Token       string `json:"token"`
 	UserID      string `json:"userId"`
+	Login       string `json:"login"`
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
 	Role        string `json:"role"`
@@ -104,6 +108,7 @@ type loginResponse struct {
 
 type profileResponse struct {
 	UserID      string `json:"userId"`
+	Login       string `json:"login"`
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
 	Role        string `json:"role"`
@@ -115,6 +120,7 @@ type accountResponse struct {
 	DisplayName string `json:"displayName"`
 	AccessLevel int    `json:"accessLevel"`
 	Role        string `json:"role"`
+	CreatedAt   string `json:"createdAt"`
 }
 
 type sessionLine struct {
@@ -173,38 +179,63 @@ type stub struct {
 	nextDocument  int
 	nextSession   int
 	nextAudit     int
+	// Настройки входа живут в памяти, как и остальные данные заглушки
+	signupSettings auth.SignupSettings
+	ldapSettings   auth.LdapSettings
 }
 
-func create_StubStore() *stub {
+// withoutUsers: старт без admin/admin и user/user, первая регистрация создаёт администратора
+func create_StubStore(withoutUsers bool, authDefaults auth.Settings) *stub {
 	stubStore := &stub{
-		usersByID:     map[string]*userRecord{},
-		usersByLogin:  map[string]*userRecord{},
-		tokens:        map[string]string{},
-		documentsByID: map[string]*documentRecord{},
-		sessions:      map[string]*sessionRecord{},
-		nextUser:      2,
-		nextDocument:  3,
-		nextSession:   1,
-		nextAudit:     1,
+		usersByID:      map[string]*userRecord{},
+		usersByLogin:   map[string]*userRecord{},
+		tokens:         map[string]string{},
+		documentsByID:  map[string]*documentRecord{},
+		sessions:       map[string]*sessionRecord{},
+		nextUser:       2,
+		nextDocument:   3,
+		nextSession:    1,
+		nextAudit:      1,
+		signupSettings: authDefaults.Signup,
+		ldapSettings:   authDefaults.Ldap,
 	}
-	stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
-	stubStore.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
+	if withoutUsers {
+		stubStore.nextUser = 1
+	} else {
+		stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
+		stubStore.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
+	}
 	stubStore.addDocument(texts.SeedInstructionID, texts.SeedInstructionTitle, texts.EditionDefault, texts.SeedDocumentAccessOpen, texts.SeedInstructionFileName, texts.PlainTextContentType, []byte(texts.SeedInstructionBody))
 	stubStore.addDocument(texts.SeedRestrictedID, texts.SeedRestrictedTitle, texts.EditionDefault, texts.SeedDocumentAccessClosed, texts.SeedRestrictedFileName, texts.PlainTextContentType, []byte(texts.SeedRestrictedBody))
 	return stubStore
 }
 
-func (stubStore *stub) addUser(id, login, password, displayName string, accessLevel int) {
+func (stubStore *stub) addUser(id, login, password, displayName string, accessLevel int) *userRecord {
 	record := &userRecord{
 		id:          id,
 		login:       login,
 		password:    password,
 		displayName: displayName,
 		accessLevel: accessLevel,
+		createdAt:   time.Now().UTC(),
 	}
 	stubStore.users = append(stubStore.users, record)
 	stubStore.usersByID[id] = record
-	stubStore.usersByLogin[login] = record
+	stubStore.usersByLogin[strings.ToLower(login)] = record
+	return record
+}
+
+// Логин без учёта регистра, как в боевом режиме
+func (stubStore *stub) find_UserByLogin(login string) *userRecord {
+	return stubStore.usersByLogin[strings.ToLower(strings.TrimSpace(login))]
+}
+
+func (stubStore *stub) create_NextUser(login, password, displayName string, accessLevel int, pending bool) *userRecord {
+	userID := "user-" + strconv.Itoa(stubStore.nextUser)
+	stubStore.nextUser++
+	record := stubStore.addUser(userID, login, password, displayName, accessLevel)
+	record.pending = pending
+	return record
 }
 
 func (stubStore *stub) addDocument(id, title, edition string, accessLevel int, fileName, contentType string, body []byte) {
@@ -227,6 +258,16 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("POST /auth/login", stubStore.serve_Login)
 	routeMux.HandleFunc("POST /auth/logout", stubStore.serve_Logout)
+	routeMux.HandleFunc("GET /auth/config", stubStore.serve_AuthConfig)
+	routeMux.HandleFunc("POST /auth/signup", stubStore.serve_Signup)
+	routeMux.HandleFunc("POST /auth/ldap", stubStore.serve_LdapLogin)
+	routeMux.HandleFunc("GET /auth/admin/details", stubStore.serve_AdminDetails)
+	routeMux.HandleFunc("GET /auth/admin/config", stubStore.serve_SignupSettings)
+	routeMux.HandleFunc("POST /auth/admin/config", stubStore.serve_SaveSignupSettings)
+	routeMux.HandleFunc("GET /auth/admin/config/ldap", stubStore.serve_LdapToggle)
+	routeMux.HandleFunc("POST /auth/admin/config/ldap", stubStore.serve_SaveLdapToggle)
+	routeMux.HandleFunc("GET /auth/admin/config/ldap/server", stubStore.serve_LdapServer)
+	routeMux.HandleFunc("POST /auth/admin/config/ldap/server", stubStore.serve_SaveLdapServer)
 	routeMux.HandleFunc("GET /me", stubStore.serve_CurrentUser)
 	routeMux.HandleFunc("POST /sessions", stubStore.serve_CreateSession)
 	routeMux.HandleFunc("GET /sessions", stubStore.serve_ListSessions)
@@ -245,21 +286,23 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 }
 
 func (stubStore *stub) serve_Login(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+	loginName, password, ok := read_LoginRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	record := stubStore.usersByLogin[body.Login]
-	if record == nil || !match_Password(record.password, body.Password) {
+	record := stubStore.find_UserByLogin(loginName)
+	if record == nil || !match_Password(record.password, password) {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorInvalidCredentials)
 		return
 	}
+	stubStore.write_LoginForRecord(responseWriter, record)
+}
+
+// Новый токен и ответ входа. Вызывать под stubStore.mu
+func (stubStore *stub) write_LoginForRecord(responseWriter http.ResponseWriter, record *userRecord) {
 	token, err := create_RandomToken()
 	if err != nil {
 		write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorInvalidBody)
@@ -269,9 +312,10 @@ func (stubStore *stub) serve_Login(responseWriter http.ResponseWriter, request *
 	write_JSONResponse(responseWriter, http.StatusOK, loginResponse{
 		Token:       token,
 		UserID:      record.id,
+		Login:       record.login,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
-		Role:        role_ForAccessLevel(record.accessLevel),
+		Role:        record.role(),
 	})
 }
 
@@ -297,9 +341,10 @@ func (stubStore *stub) serve_CurrentUser(responseWriter http.ResponseWriter, req
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, profileResponse{
 		UserID:      record.id,
+		Login:       record.login,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
-		Role:        role_ForAccessLevel(record.accessLevel),
+		Role:        record.role(),
 	})
 }
 
@@ -626,57 +671,34 @@ func (stubStore *stub) serve_ListUsers(responseWriter http.ResponseWriter, reque
 }
 
 func (stubStore *stub) serve_CreateUser(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Login       string `json:"login"`
-		Password    string `json:"password"`
-		DisplayName string `json:"displayName"`
-		AccessLevel *int   `json:"accessLevel"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+	created, ok := read_CreateUserRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
-	}
-	body.Login = strings.TrimSpace(body.Login)
-	body.DisplayName = strings.TrimSpace(body.DisplayName)
-	if body.Login == "" || body.Password == "" || body.DisplayName == "" {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-		return
-	}
-	accessLevel := texts.SeedDocumentAccessOpen
-	if body.AccessLevel != nil {
-		accessLevel = *body.AccessLevel
 	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
 	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
 		return
 	}
-	if stubStore.usersByLogin[body.Login] != nil {
+	if stubStore.find_UserByLogin(created.login) != nil {
 		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorLoginTaken)
 		return
 	}
-	userID := "user-" + strconv.Itoa(stubStore.nextUser)
-	stubStore.nextUser++
-	stubStore.addUser(userID, body.Login, body.Password, body.DisplayName, accessLevel)
-	write_JSONResponse(responseWriter, http.StatusOK, stubStore.usersByID[userID].account())
+	record := stubStore.create_NextUser(created.login, created.password, created.displayName, created.accessLevel, created.pending)
+	write_JSONResponse(responseWriter, http.StatusOK, record.account())
 }
 
 func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		DisplayName *string `json:"displayName"`
-		AccessLevel *int    `json:"accessLevel"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-		return
-	}
-	if body.DisplayName == nil && body.AccessLevel == nil {
+	patch, ok := read_PatchUserRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
+	actor, found := stubStore.require_AdminUser(responseWriter, request)
+	if !found {
 		return
 	}
 	record := stubStore.usersByID[request.PathValue("userId")]
@@ -684,11 +706,34 @@ func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, reque
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
-	if body.DisplayName != nil {
-		record.displayName = strings.TrimSpace(*body.DisplayName)
+	// Свою роль администратор не меняет, как в боевом режиме
+	levelChanges := patch.AccessLevel != nil && *patch.AccessLevel != record.accessLevel
+	pendingChanges := patch.Pending != nil && *patch.Pending != record.pending
+	if actor.id == record.id && (levelChanges || pendingChanges) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
 	}
-	if body.AccessLevel != nil {
-		record.accessLevel = *body.AccessLevel
+	if patch.Login != nil {
+		owner := stubStore.find_UserByLogin(*patch.Login)
+		if owner != nil && owner.id != record.id {
+			write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorLoginTaken)
+			return
+		}
+		delete(stubStore.usersByLogin, strings.ToLower(record.login))
+		record.login = *patch.Login
+		stubStore.usersByLogin[strings.ToLower(record.login)] = record
+	}
+	if patch.DisplayName != nil {
+		record.displayName = *patch.DisplayName
+	}
+	if patch.Password != nil {
+		record.password = *patch.Password
+	}
+	if patch.AccessLevel != nil {
+		record.accessLevel = *patch.AccessLevel
+	}
+	if patch.Pending != nil {
+		record.pending = *patch.Pending
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, record.account())
 }
@@ -805,6 +850,10 @@ func (stubStore *stub) require_AdminUser(responseWriter http.ResponseWriter, req
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return nil, false
 	}
+	if record.pending {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccountPending)
+		return nil, false
+	}
 	if record.accessLevel < adminAccessLevel {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return nil, false
@@ -853,8 +902,13 @@ func (record *userRecord) account() accountResponse {
 		Login:       record.login,
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
-		Role:        role_ForAccessLevel(record.accessLevel),
+		Role:        record.role(),
+		CreatedAt:   record.createdAt.UTC().Format(time.RFC3339),
 	}
+}
+
+func (record *userRecord) role() string {
+	return auth.Role_ForAccess(record.accessLevel, record.pending)
 }
 
 func (session *sessionRecord) line() sessionLine {
@@ -864,13 +918,6 @@ func (session *sessionRecord) line() sessionLine {
 		CreatedAt: session.createdAt.UTC().Format(time.RFC3339),
 		UpdatedAt: session.updatedAt.UTC().Format(time.RFC3339),
 	}
-}
-
-func role_ForAccessLevel(accessLevel int) string {
-	if accessLevel >= adminAccessLevel {
-		return texts.RoleAdmin
-	}
-	return texts.RoleUser
 }
 
 // Заголовок чата берётся из первого вопроса и дальше не меняется.

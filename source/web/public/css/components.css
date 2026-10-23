@@ -296,3 +296,67 @@ a.chip:hover {
 	font-size: 10px;
 	font-weight: 600;
 }
+
+/* Переключатель вкл/выкл на обычном checkbox, как в настройках open-webui */
+
+.switch {
+	position: relative;
+	flex: 0 0 auto;
+	width: 36px;
+	height: 20px;
+	margin: 0;
+	border-radius: var(--radius-pill);
+	background: var(--color-border-strong);
+	appearance: none;
+	cursor: pointer;
+	transition: background var(--transition-fast);
+}
+
+.switch::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--color-bg-elevated);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+	transition: transform var(--transition-fast);
+}
+
+.switch:checked {
+	background: var(--color-accent);
+}
+
+.switch:checked::after {
+	transform: translateX(16px);
+}
+
+.switch:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: 2px;
+}
+
+.switch:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Кнопка, которая выглядит как ссылка */
+
+.link-button {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--color-text);
+	font: inherit;
+	font-weight: 500;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+.link-button:hover {
+	color: var(--color-text-muted);
+}

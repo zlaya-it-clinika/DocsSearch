@@ -1,4 +1,4 @@
-// Маршруты /api: вход и выход обрабатывает сам веб-сервер, остальное уходит в ядро.
+// Маршруты /api: вход, регистрацию и выход обрабатывает сам веб-сервер, остальное уходит в ядро.
 import { build_SessionCookie, parse_Cookies } from './cookies.js';
 import { call_CoreJson, forward_ToCore } from './core-client.js';
 import { RequestError, read_ClientAddress, read_JsonBody, send_Empty, send_Json } from './http-utils.js';
@@ -8,6 +8,9 @@ import { ErrorCodes } from './texts.js';
 // Разделы ядра, которые можно вызывать из браузера. Вход ядра (/auth/login) и страница /docs
 // сюда не входят: токен ядра не должен попасть в браузер.
 const proxiedCoreSections = new Set(['me', 'sessions', 'documents', 'users', 'audit', 'drafts', 'templates']);
+
+// Настройки входа администратора (/auth/admin/...) идут в ядро с токеном сессии
+const adminAuthPrefix = '/auth/admin/';
 
 const csrfHeader = 'x-csrf-token';
 const readOnlyMethods = new Set(['GET', 'HEAD']);
@@ -49,7 +52,25 @@ function build_PublicConfig(config) {
 	};
 }
 
-async function handle_Login(context) {
+// Поля тела запроса, которые должны быть строками. Остальное не передаём в ядро
+function pick_StringFields(body, fieldNames) {
+	if (!body || typeof body !== 'object') {
+		return null;
+	}
+	const picked = {};
+	for (const name of fieldNames) {
+		if (typeof body[name] !== 'string') {
+			return null;
+		}
+		picked[name] = body[name];
+	}
+	return picked;
+}
+
+// Вход, регистрация и вход через LDAP устроены одинаково: ядро выдаёт токен,
+// веб-сервер прячет его в своей сессии и отдаёт браузеру только cookie.
+// countFailure решает, какие ответы ядра считать неудачной попыткой для защиты от перебора
+async function create_CoreSession(context, { corePath, body, countFailure }) {
 	const { config, request, response, sessionStore, loginLimiter } = context;
 	if (request.method !== 'POST') {
 		throw new RequestError(405, ErrorCodes.methodNotAllowed);
@@ -61,15 +82,13 @@ async function handle_Login(context) {
 	if (loginLimiter.check_IsBlocked(clientAddress)) {
 		throw new RequestError(429, ErrorCodes.tooManyAttempts);
 	}
-	const body = await read_JsonBody(request, config.maxJsonBytes);
-	if (typeof body?.login !== 'string' || typeof body?.password !== 'string' || body.login.trim() === '') {
+	const coreBody = body(await read_JsonBody(request, config.maxJsonBytes));
+	if (!coreBody) {
 		throw new RequestError(400, ErrorCodes.invalidBody);
 	}
 
-	const coreReply = await call_CoreJson(config, 'POST', '/auth/login', {
-		body: { login: body.login.trim(), password: body.password },
-	});
-	if (coreReply.status === 401) {
+	const coreReply = await call_CoreJson(config, 'POST', corePath, { body: coreBody });
+	if (countFailure(coreReply.status)) {
 		loginLimiter.register_Failure(clientAddress);
 	}
 	if (coreReply.status !== 200 || typeof coreReply.payload?.token !== 'string') {
@@ -85,6 +104,60 @@ async function handle_Login(context) {
 	const session = sessionStore.create_Session(coreReply.payload.token, pick_PublicUser(coreReply.payload));
 	response.setHeader('Set-Cookie', build_SessionCookie(config, session.id, config.sessionTtlMs / 1000));
 	send_Json(response, 200, { user: session.user, csrfToken: session.csrfToken });
+}
+
+function handle_Login(context) {
+	return create_CoreSession(context, {
+		corePath: '/auth/login',
+		body: (raw) => {
+			const fields = pick_StringFields(raw, ['login', 'password']);
+			if (!fields || fields.login.trim() === '') {
+				return null;
+			}
+			return { login: fields.login.trim(), password: fields.password };
+		},
+		countFailure: (status) => status === 401,
+	});
+}
+
+// Регистрация по почте. Неудачи (занятая почта, закрытая регистрация) тоже считаем,
+// чтобы с одного адреса нельзя было перебирать почты сотрудников
+function handle_Signup(context) {
+	return create_CoreSession(context, {
+		corePath: '/auth/signup',
+		body: (raw) => {
+			const fields = pick_StringFields(raw, ['email', 'password', 'displayName']);
+			if (!fields || fields.email.trim() === '' || fields.displayName.trim() === '' || fields.password === '') {
+				return null;
+			}
+			return { email: fields.email.trim(), password: fields.password, displayName: fields.displayName.trim() };
+		},
+		countFailure: (status) => status >= 400 && status < 500,
+	});
+}
+
+function handle_LdapLogin(context) {
+	return create_CoreSession(context, {
+		corePath: '/auth/ldap',
+		body: (raw) => {
+			const fields = pick_StringFields(raw, ['login', 'password']);
+			if (!fields || fields.login.trim() === '') {
+				return null;
+			}
+			return { login: fields.login.trim(), password: fields.password };
+		},
+		countFailure: (status) => status === 401,
+	});
+}
+
+// Что показать на экране входа: первый запуск, регистрация, LDAP. Без сессии
+async function handle_AuthConfig(context) {
+	const { config, request, response } = context;
+	if (request.method !== 'GET') {
+		throw new RequestError(405, ErrorCodes.methodNotAllowed);
+	}
+	const coreReply = await call_CoreJson(config, 'GET', '/auth/config');
+	send_Json(response, coreReply.status, coreReply.payload ?? { error: ErrorCodes.coreUnavailable });
 }
 
 async function handle_SessionInfo(context) {
@@ -134,7 +207,7 @@ async function handle_Logout(context) {
 async function handle_Proxy(context, apiPath, search) {
 	const { config, request, response, sessionStore, session } = context;
 	const section = apiPath.split('/')[1] ?? '';
-	if (!proxiedCoreSections.has(section)) {
+	if (!proxiedCoreSections.has(section) && !apiPath.startsWith(adminAuthPrefix)) {
 		throw new RequestError(404, ErrorCodes.notFound);
 	}
 	if (!session) {
@@ -171,6 +244,15 @@ export async function handle_Api(context, url) {
 		case '/auth/login':
 			await handle_Login(routeContext);
 			return;
+		case '/auth/signup':
+			await handle_Signup(routeContext);
+			return;
+		case '/auth/ldap':
+			await handle_LdapLogin(routeContext);
+			return;
+		case '/auth/config':
+			await handle_AuthConfig(routeContext);
+			return;
 		case '/auth/session':
 			await handle_SessionInfo(routeContext);
 			return;
@@ -178,7 +260,7 @@ export async function handle_Api(context, url) {
 			await handle_Logout(routeContext);
 			return;
 		default:
-			if (apiPath.startsWith('/auth/')) {
+			if (apiPath.startsWith('/auth/') && !apiPath.startsWith(adminAuthPrefix)) {
 				throw new RequestError(404, ErrorCodes.notFound);
 			}
 			await handle_Proxy(routeContext, apiPath, url.search);

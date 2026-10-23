@@ -15,6 +15,7 @@ export class ApiError extends Error {
 
 let csrfToken = '';
 const unauthorizedListeners = new Set();
+const pendingListeners = new Set();
 
 export function set_CsrfToken(token) {
 	csrfToken = token ?? '';
@@ -24,6 +25,12 @@ export function set_CsrfToken(token) {
 export function on_Unauthorized(listener) {
 	unauthorizedListeners.add(listener);
 	return () => unauthorizedListeners.delete(listener);
+}
+
+// Подписка на 403 account_pending: администратор вернул учётную запись в ожидание
+export function on_AccountPending(listener) {
+	pendingListeners.add(listener);
+	return () => pendingListeners.delete(listener);
 }
 
 async function read_Payload(response) {
@@ -70,6 +77,11 @@ async function request_Api(method, path, { json, formData, silentUnauthorized = 
 				listener();
 			}
 		}
+		if (response.status === 403 && code === 'account_pending') {
+			for (const listener of pendingListeners) {
+				listener();
+			}
+		}
 		throw new ApiError(response.status, code);
 	}
 	return payload;
@@ -90,8 +102,29 @@ export function fetch_PublicConfig() {
 	return request_Api('GET', '/config');
 }
 
+// Вход по почте и паролю. Старые учётные записи входят по логину через то же поле
 export function login_User(login, password) {
 	return request_Api('POST', '/auth/login', { json: { login, password }, silentUnauthorized: true });
+}
+
+// Вход доменной учётной записью: логин каталога (например, ivanov) и пароль
+export function login_LdapUser(login, password) {
+	return request_Api('POST', '/auth/ldap', { json: { login, password }, silentUnauthorized: true });
+}
+
+// Регистрация. Первая учётная запись в системе становится администратором
+export function signup_User({ email, password, displayName }) {
+	return request_Api('POST', '/auth/signup', { json: { email, password, displayName }, silentUnauthorized: true });
+}
+
+// { onboarding, enableSignup, enableLdap, ldapLabel } - что показать на экране входа
+export function fetch_AuthConfig() {
+	return request_Api('GET', '/auth/config', { silentUnauthorized: true });
+}
+
+// Контакт администратора для экрана ожидания
+export function fetch_AdminDetails() {
+	return request_Api('GET', '/auth/admin/details', { silentUnauthorized: true });
 }
 
 export function fetch_AuthSession() {
@@ -187,4 +220,31 @@ export function update_User(userId, fields) {
 
 export function fetch_AuditLog() {
 	return request_Api('GET', '/audit');
+}
+
+// Настройки входа (администратор): регистрация, роль по умолчанию, LDAP
+
+export function fetch_SignupSettings() {
+	return request_Api('GET', '/auth/admin/config');
+}
+
+export function save_SignupSettings(fields) {
+	return request_Api('POST', '/auth/admin/config', { json: fields });
+}
+
+export function fetch_LdapToggle() {
+	return request_Api('GET', '/auth/admin/config/ldap');
+}
+
+export function save_LdapToggle(enableLdap) {
+	return request_Api('POST', '/auth/admin/config/ldap', { json: { enableLdap } });
+}
+
+export function fetch_LdapServer() {
+	return request_Api('GET', '/auth/admin/config/ldap/server');
+}
+
+// Пустой appDnPassword оставляет сохранённый пароль служебной учётной записи
+export function save_LdapServer(fields) {
+	return request_Api('POST', '/auth/admin/config/ldap/server', { json: fields });
 }

@@ -4,6 +4,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"docssearch/core/internal/auth"
+	"docssearch/core/internal/texts"
 )
 
 const (
@@ -21,6 +24,11 @@ type Config struct {
 	OllamaChatModel       string
 	OllamaEmbedModel      string
 	OllamaEmbedDimensions int
+	// STUB_SEED_USERS=false: заглушка стартует без admin/admin и user/user, первый вход через регистрацию.
+	// Нулевое значение оставляет учётные записи заглушки, на них опираются тесты и клиенты
+	StubWithoutUsers bool
+	// Начальные настройки входа. После сохранения в админ-панели действуют значения из базы
+	AuthDefaults auth.Settings
 }
 
 func Load() Config {
@@ -43,7 +51,72 @@ func Load() Config {
 		OllamaChatModel:       os.Getenv("OLLAMA_CHAT_MODEL"),
 		OllamaEmbedModel:      os.Getenv("OLLAMA_EMBED_MODEL"),
 		OllamaEmbedDimensions: read_EmbedDimensions(),
+		StubWithoutUsers:      !read_Boolean("STUB_SEED_USERS", true),
+		AuthDefaults:          read_AuthDefaults(),
 	}
+}
+
+// Имена переменных как в open-webui, чтобы их было легко узнать
+func read_AuthDefaults() auth.Settings {
+	defaultRole := auth.Normalize_Role(os.Getenv("DEFAULT_USER_ROLE"))
+	if !auth.Check_IsKnownRole(defaultRole) {
+		defaultRole = texts.RolePending
+	}
+	ldapLabel := strings.TrimSpace(os.Getenv("LDAP_SERVER_LABEL"))
+	if ldapLabel == "" {
+		ldapLabel = texts.DefaultLdapLabel
+	}
+	return auth.Settings{
+		Signup: auth.SignupSettings{
+			EnableSignup:     read_Boolean("ENABLE_SIGNUP", true),
+			DefaultUserRole:  defaultRole,
+			ShowAdminDetails: read_Boolean("SHOW_ADMIN_DETAILS", true),
+		},
+		Ldap: auth.LdapSettings{
+			EnableLdap:           read_Boolean("ENABLE_LDAP", false),
+			Label:                ldapLabel,
+			Host:                 strings.TrimSpace(os.Getenv("LDAP_SERVER_HOST")),
+			Port:                 read_Integer("LDAP_SERVER_PORT", 0),
+			AttributeForMail:     read_String("LDAP_ATTRIBUTE_FOR_MAIL", "mail"),
+			AttributeForUsername: read_String("LDAP_ATTRIBUTE_FOR_USERNAME", "sAMAccountName"),
+			AppDN:                strings.TrimSpace(os.Getenv("LDAP_APP_DN")),
+			AppPassword:          os.Getenv("LDAP_APP_PASSWORD"),
+			SearchBase:           strings.TrimSpace(os.Getenv("LDAP_SEARCH_BASE")),
+			SearchFilters:        strings.TrimSpace(os.Getenv("LDAP_SEARCH_FILTERS")),
+			UseTLS:               read_Boolean("LDAP_USE_TLS", false),
+			CertificatePath:      strings.TrimSpace(os.Getenv("LDAP_CA_CERT_FILE")),
+			ValidateCert:         read_Boolean("LDAP_VALIDATE_CERT", true),
+			Ciphers:              read_String("LDAP_CIPHERS", "ALL"),
+		},
+	}
+}
+
+func read_String(name, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func read_Boolean(name string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	switch value {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func read_Integer(name string, fallback int) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func read_EmbedDimensions() int {

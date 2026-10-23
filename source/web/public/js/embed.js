@@ -1,12 +1,14 @@
 // Чат внутри iframe виджета на портале. Тот же API и те же компоненты, что у полной страницы.
-import { fetch_AuthSession, fetch_PublicConfig, on_Unauthorized, set_CsrfToken } from './api.js';
+import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_Unauthorized, set_CsrfToken } from './api.js';
 import { create_ChatHistory } from './chat-history.js';
 import { show_Toast } from './components/toast.js';
 import { create_Element, create_EmptyBlock, create_Icon, create_IconButton } from './lib/dom.js';
 import { apply_Theme, get_Theme, read_Preference, remove_Preference, write_Preference } from './preferences.js';
-import { AppTexts, AuthTexts, WidgetTexts, get_ErrorText } from './texts.js';
+import { check_IsPending } from './roles.js';
+import { AppTexts, AuthTexts, PendingTexts, WidgetTexts, get_ErrorText } from './texts.js';
 import { create_ChatView } from './views/chat.js';
 import { create_LoginView } from './views/login.js';
+import { create_PendingView } from './views/pending.js';
 
 const root = document.getElementById('app');
 const closeMessageType = 'docssearch:close';
@@ -71,18 +73,54 @@ function show_Chat(sessionId) {
 	chatView.focus();
 }
 
+// После входа: чат или экран ожидания, если учётную запись ещё не подтвердили
+function open_Session(session) {
+	set_CsrfToken(session.csrfToken);
+	user = session.user;
+	if (check_IsPending(user, config)) {
+		show_Pending();
+		return;
+	}
+	newChatButton.hidden = false;
+	show_Chat(read_Preference(get_StoredSessionName(), null));
+}
+
 function show_Login() {
 	user = null;
 	chatView?.destroy();
 	chatView = null;
 	newChatButton.hidden = true;
-	const view = create_LoginView({
+	const view = create_LoginView({ compact: true, onSuccess: open_Session });
+	content.replaceChildren(view.element);
+	view.focus();
+}
+
+function show_Pending() {
+	chatView?.destroy();
+	chatView = null;
+	newChatButton.hidden = true;
+	const view = create_PendingView({
 		compact: true,
-		onSuccess: (session) => {
-			set_CsrfToken(session.csrfToken);
-			user = session.user;
-			newChatButton.hidden = false;
-			show_Chat(read_Preference(get_StoredSessionName(), null));
+		onRecheck: async () => {
+			try {
+				const session = await fetch_AuthSession();
+				if (check_IsPending(session.user, config)) {
+					show_Toast(PendingTexts.stillPending, 'info');
+					return;
+				}
+				open_Session(session);
+			} catch (error) {
+				show_Toast(get_ErrorText(error), 'error');
+			}
+		},
+		onLogout: async () => {
+			try {
+				await logout_User();
+			} catch {
+				// Сессию на клиенте сбрасываем в любом случае
+			}
+			set_CsrfToken('');
+			show_Login();
 		},
 	});
 	content.replaceChildren(view.element);
@@ -119,10 +157,7 @@ async function boot() {
 		}
 	});
 	try {
-		const session = await fetch_AuthSession();
-		set_CsrfToken(session.csrfToken);
-		user = session.user;
-		show_Chat(read_Preference(get_StoredSessionName(), null));
+		open_Session(await fetch_AuthSession());
 	} catch {
 		show_Login();
 	}

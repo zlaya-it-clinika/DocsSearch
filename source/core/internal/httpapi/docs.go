@@ -55,7 +55,22 @@ type docsConsoleView struct {
 	HintPatchUser         string
 	HintAudit             string
 	HintDraft             string
+	HintAuthConfig        string
+	HintSignup            string
+	HintLdapLogin         string
+	HintAdminDetails      string
+	HintSignupConfig      string
+	HintSaveSignup        string
+	HintLdapToggle        string
+	HintSaveLdapToggle    string
+	HintLdapServer        string
+	HintSaveLdapServer    string
 	ExampleLoginBody      string
+	ExampleSignupBody     string
+	ExampleLdapLoginBody  string
+	ExampleSignupConfig   string
+	ExampleLdapToggle     string
+	ExampleLdapServer     string
 	ExampleMessageBody    string
 	ExampleCreateUserBody string
 	ExamplePatchUserBody  string
@@ -185,7 +200,22 @@ func consoleView() docsConsoleView {
 		HintPatchUser:         texts.DocsHintPatchUser,
 		HintAudit:             texts.DocsHintAudit,
 		HintDraft:             texts.DocsHintDraft,
+		HintAuthConfig:        texts.DocsHintAuthConfig,
+		HintSignup:            texts.DocsHintSignup,
+		HintLdapLogin:         texts.DocsHintLdapLogin,
+		HintAdminDetails:      texts.DocsHintAdminDetails,
+		HintSignupConfig:      texts.DocsHintSignupConfig,
+		HintSaveSignup:        texts.DocsHintSaveSignup,
+		HintLdapToggle:        texts.DocsHintLdapToggle,
+		HintSaveLdapToggle:    texts.DocsHintSaveLdapToggle,
+		HintLdapServer:        texts.DocsHintLdapServer,
+		HintSaveLdapServer:    texts.DocsHintSaveLdapServer,
 		ExampleLoginBody:      texts.DocsExampleLoginBody,
+		ExampleSignupBody:     texts.DocsExampleSignupBody,
+		ExampleLdapLoginBody:  texts.DocsExampleLdapLoginBody,
+		ExampleSignupConfig:   texts.DocsExampleSignupConfigBody,
+		ExampleLdapToggle:     texts.DocsExampleLdapToggleBody,
+		ExampleLdapServer:     texts.DocsExampleLdapServerBody,
 		ExampleMessageBody:    texts.DocsExampleMessageBody,
 		ExampleCreateUserBody: texts.DocsExampleCreateUserBody,
 		ExamplePatchUserBody:  texts.DocsExamplePatchUserBody,

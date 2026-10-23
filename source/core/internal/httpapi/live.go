@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/blank"
 	"docssearch/core/internal/draftcheck"
 	"docssearch/core/internal/livestore"
@@ -30,6 +31,16 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("POST /auth/login", api.serve_Login)
 	routeMux.HandleFunc("POST /auth/logout", api.serve_Logout)
+	routeMux.HandleFunc("GET /auth/config", api.serve_AuthConfig)
+	routeMux.HandleFunc("POST /auth/signup", api.serve_Signup)
+	routeMux.HandleFunc("POST /auth/ldap", api.serve_LdapLogin)
+	routeMux.HandleFunc("GET /auth/admin/details", api.serve_AdminDetails)
+	routeMux.HandleFunc("GET /auth/admin/config", api.serve_SignupSettings)
+	routeMux.HandleFunc("POST /auth/admin/config", api.serve_SaveSignupSettings)
+	routeMux.HandleFunc("GET /auth/admin/config/ldap", api.serve_LdapToggle)
+	routeMux.HandleFunc("POST /auth/admin/config/ldap", api.serve_SaveLdapToggle)
+	routeMux.HandleFunc("GET /auth/admin/config/ldap/server", api.serve_LdapServer)
+	routeMux.HandleFunc("POST /auth/admin/config/ldap/server", api.serve_SaveLdapServer)
 	routeMux.HandleFunc("GET /me", api.serve_CurrentUser)
 	routeMux.HandleFunc("POST /sessions", api.serve_CreateSession)
 	routeMux.HandleFunc("GET /sessions", api.serve_ListSessions)
@@ -48,11 +59,8 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 }
 
 func (api *liveAPI) serve_Login(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+	loginName, password, ok := read_LoginRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -61,18 +69,225 @@ func (api *liveAPI) serve_Login(responseWriter http.ResponseWriter, request *htt
 		write_LiveError(responseWriter, err)
 		return
 	}
-	result, err := api.store.Login_User(request.Context(), body.Login, body.Password, token)
+	result, err := api.store.Login_User(request.Context(), loginName, password, token)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, loginResponse{
+	write_JSONResponse(responseWriter, http.StatusOK, build_LiveLoginResponse(result))
+}
+
+func build_LiveLoginResponse(result livestore.LoginResult) loginResponse {
+	return loginResponse{
 		Token:       result.Token,
 		UserID:      result.UserID,
+		Login:       result.Login,
 		DisplayName: result.DisplayName,
 		AccessLevel: result.AccessLevel,
-		Role:        role_ForAccessLevel(result.AccessLevel),
+		Role:        auth.Role_ForAccess(result.AccessLevel, result.Pending),
+	}
+}
+
+func build_LiveAccountResponse(account livestore.Account) accountResponse {
+	return accountResponse{
+		UserID:      account.UserID,
+		Login:       account.Login,
+		DisplayName: account.DisplayName,
+		AccessLevel: account.AccessLevel,
+		Role:        auth.Role_ForAccess(account.AccessLevel, account.Pending),
+		CreatedAt:   account.CreatedAt.UTC().Format(timeLayout),
+	}
+}
+
+func (api *liveAPI) serve_AuthConfig(responseWriter http.ResponseWriter, request *http.Request) {
+	publicConfig, err := api.store.Read_PublicAuthConfig(request.Context())
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, publicAuthConfigResponse{
+		Onboarding:   publicConfig.Onboarding,
+		EnableSignup: publicConfig.EnableSignup,
+		EnableLdap:   publicConfig.EnableLdap,
+		LdapLabel:    publicConfig.LdapLabel,
 	})
+}
+
+func (api *liveAPI) serve_Signup(responseWriter http.ResponseWriter, request *http.Request) {
+	body, errorCode := read_SignupRequest(responseWriter, request)
+	if errorCode != "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, errorCode)
+		return
+	}
+	token, err := create_RandomToken()
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	result, err := api.store.Signup_User(request.Context(), body.Email, body.Password, body.DisplayName, token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, build_LiveLoginResponse(result))
+}
+
+func (api *liveAPI) serve_LdapLogin(responseWriter http.ResponseWriter, request *http.Request) {
+	body, ok := read_LdapLoginRequest(responseWriter, request)
+	if !ok {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	token, err := create_RandomToken()
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	result, err := api.store.Login_LdapUser(request.Context(), body.Login, body.Password, token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, build_LiveLoginResponse(result))
+}
+
+func (api *liveAPI) serve_AdminDetails(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	details, err := api.store.Read_AdminDetails(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, adminDetailsResponse{Name: details.Name, Email: details.Email})
+}
+
+func (api *liveAPI) serve_SignupSettings(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	settings, err := api.store.Read_SignupSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, settings)
+}
+
+func (api *liveAPI) serve_SaveSignupSettings(responseWriter http.ResponseWriter, request *http.Request) {
+	var body signupSettingsRequest
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	current, err := api.store.Read_SignupSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	updated, ok := apply_SignupSettingsRequest(current, body)
+	if !ok {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	saved, err := api.store.Save_SignupSettings(request.Context(), token, updated)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, saved)
+}
+
+func (api *liveAPI) serve_LdapToggle(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	settings, err := api.store.Read_LdapSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, ldapToggleResponse{EnableLdap: settings.EnableLdap})
+}
+
+func (api *liveAPI) serve_SaveLdapToggle(responseWriter http.ResponseWriter, request *http.Request) {
+	var body ldapToggleBody
+	if err := read_JSONBody(responseWriter, request, &body); err != nil || body.EnableLdap == nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	settings, err := api.store.Read_LdapSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	settings.EnableLdap = *body.EnableLdap
+	saved, err := api.store.Save_LdapSettings(request.Context(), token, settings)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, ldapToggleResponse{EnableLdap: saved.EnableLdap})
+}
+
+func (api *liveAPI) serve_LdapServer(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	settings, err := api.store.Read_LdapSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, build_LdapServerResponse(settings))
+}
+
+func (api *liveAPI) serve_SaveLdapServer(responseWriter http.ResponseWriter, request *http.Request) {
+	var body ldapServerRequest
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	current, err := api.store.Read_LdapSettings(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	updated, ok := apply_LdapServerRequest(current, body)
+	if !ok {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	saved, err := api.store.Save_LdapSettings(request.Context(), token, updated)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, build_LdapServerResponse(saved))
 }
 
 func (api *liveAPI) serve_Logout(responseWriter http.ResponseWriter, request *http.Request) {
@@ -94,16 +309,18 @@ func (api *liveAPI) serve_CurrentUser(responseWriter http.ResponseWriter, reques
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	account, err := api.store.Find_AccountByToken(request.Context(), token)
+	// Профиль отдаём и ожидающему подтверждения: по роли pending клиент показывает экран ожидания
+	account, err := api.store.Find_ProfileByToken(request.Context(), token)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, profileResponse{
 		UserID:      account.UserID,
+		Login:       account.Login,
 		DisplayName: account.DisplayName,
 		AccessLevel: account.AccessLevel,
-		Role:        role_ForAccessLevel(account.AccessLevel),
+		Role:        auth.Role_ForAccess(account.AccessLevel, account.Pending),
 	})
 }
 
@@ -410,13 +627,7 @@ func (api *liveAPI) serve_ListUsers(responseWriter http.ResponseWriter, request 
 	}
 	lines := make([]accountResponse, 0, len(accounts))
 	for _, account := range accounts {
-		lines = append(lines, accountResponse{
-			UserID:      account.UserID,
-			Login:       account.Login,
-			DisplayName: account.DisplayName,
-			AccessLevel: account.AccessLevel,
-			Role:        role_ForAccessLevel(account.AccessLevel),
-		})
+		lines = append(lines, build_LiveAccountResponse(account))
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		Users []accountResponse `json:"users"`
@@ -424,55 +635,27 @@ func (api *liveAPI) serve_ListUsers(responseWriter http.ResponseWriter, request 
 }
 
 func (api *liveAPI) serve_CreateUser(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		Login       string `json:"login"`
-		Password    string `json:"password"`
-		DisplayName string `json:"displayName"`
-		AccessLevel *int   `json:"accessLevel"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+	created, ok := read_CreateUserRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
-	}
-	body.Login = strings.TrimSpace(body.Login)
-	body.DisplayName = strings.TrimSpace(body.DisplayName)
-	if body.Login == "" || body.Password == "" || body.DisplayName == "" {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-		return
-	}
-	accessLevel := texts.SeedDocumentAccessOpen
-	if body.AccessLevel != nil {
-		accessLevel = *body.AccessLevel
 	}
 	token, found := read_BearerToken(request)
 	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	account, err := api.store.Create_Account(request.Context(), token, body.Login, body.Password, body.DisplayName, accessLevel)
+	account, err := api.store.Create_Account(request.Context(), token, created.login, created.password, created.displayName, created.accessLevel, created.pending)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, accountResponse{
-		UserID:      account.UserID,
-		Login:       account.Login,
-		DisplayName: account.DisplayName,
-		AccessLevel: account.AccessLevel,
-		Role:        role_ForAccessLevel(account.AccessLevel),
-	})
+	write_JSONResponse(responseWriter, http.StatusOK, build_LiveAccountResponse(account))
 }
 
 func (api *liveAPI) serve_PatchUser(responseWriter http.ResponseWriter, request *http.Request) {
-	var body struct {
-		DisplayName *string `json:"displayName"`
-		AccessLevel *int    `json:"accessLevel"`
-	}
-	if err := read_JSONBody(responseWriter, request, &body); err != nil {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-		return
-	}
-	if body.DisplayName == nil && body.AccessLevel == nil {
+	patch, ok := read_PatchUserRequest(responseWriter, request)
+	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -481,18 +664,12 @@ func (api *liveAPI) serve_PatchUser(responseWriter http.ResponseWriter, request 
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	account, err := api.store.Patch_Account(request.Context(), token, request.PathValue("userId"), body.DisplayName, body.AccessLevel)
+	account, err := api.store.Patch_Account(request.Context(), token, request.PathValue("userId"), patch)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, accountResponse{
-		UserID:      account.UserID,
-		Login:       account.Login,
-		DisplayName: account.DisplayName,
-		AccessLevel: account.AccessLevel,
-		Role:        role_ForAccessLevel(account.AccessLevel),
-	})
+	write_JSONResponse(responseWriter, http.StatusOK, build_LiveAccountResponse(account))
 }
 
 func (api *liveAPI) serve_Audit(responseWriter http.ResponseWriter, request *http.Request) {
@@ -596,6 +773,18 @@ func write_LiveError(responseWriter http.ResponseWriter, err error) {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorEmbedSize)
 	case errors.Is(err, livestore.ErrEmbedUnavailable):
 		write_ErrorResponse(responseWriter, http.StatusBadGateway, texts.ErrorEmbedUnavailable)
+	case errors.Is(err, livestore.ErrSignupDisabled):
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorSignupDisabled)
+	case errors.Is(err, livestore.ErrAccountPending):
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccountPending)
+	case errors.Is(err, livestore.ErrLdapDisabled):
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorLdapDisabled)
+	case errors.Is(err, auth.ErrLdapEmailMissing):
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorLdapEmailMissing)
+	case errors.Is(err, auth.ErrLdapUnavailable):
+		// В тексте ошибки адрес сервера и ответ каталога, пароля там нет
+		log.Printf("ldap error: %v", err)
+		write_ErrorResponse(responseWriter, http.StatusBadGateway, texts.ErrorLdapUnavailable)
 	default:
 		log.Printf("store error: %v", err)
 		write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)

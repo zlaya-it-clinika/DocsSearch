@@ -189,6 +189,91 @@
 			<pre class="result"></pre>
 		</form>
 
+		<form class="call" data-method="GET" data-auth="no">
+			<h2><span class="method get">GET</span>/auth/config</h2>
+			<p class="hint">{{.HintAuthConfig}}</p>
+			<input name="path" value="/auth/config">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST" data-auth="no" data-capture="token">
+			<h2><span class="method post">POST</span>/auth/signup</h2>
+			<p class="hint">{{.HintSignup}}</p>
+			<input name="path" value="/auth/signup">
+			<textarea name="body" rows="5">{{.ExampleSignupBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST" data-auth="no" data-capture="token">
+			<h2><span class="method post">POST</span>/auth/ldap</h2>
+			<p class="hint">{{.HintLdapLogin}}</p>
+			<input name="path" value="/auth/ldap">
+			<textarea name="body" rows="4">{{.ExampleLdapLoginBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/auth/admin/details</h2>
+			<p class="hint">{{.HintAdminDetails}}</p>
+			<input name="path" value="/auth/admin/details">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/auth/admin/config</h2>
+			<p class="hint">{{.HintSignupConfig}}</p>
+			<input name="path" value="/auth/admin/config">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/auth/admin/config</h2>
+			<p class="hint">{{.HintSaveSignup}}</p>
+			<input name="path" value="/auth/admin/config">
+			<textarea name="body" rows="5">{{.ExampleSignupConfig}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/auth/admin/config/ldap</h2>
+			<p class="hint">{{.HintLdapToggle}}</p>
+			<input name="path" value="/auth/admin/config/ldap">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/auth/admin/config/ldap</h2>
+			<p class="hint">{{.HintSaveLdapToggle}}</p>
+			<input name="path" value="/auth/admin/config/ldap">
+			<textarea name="body" rows="3">{{.ExampleLdapToggle}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/auth/admin/config/ldap/server</h2>
+			<p class="hint">{{.HintLdapServer}}</p>
+			<input name="path" value="/auth/admin/config/ldap/server">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/auth/admin/config/ldap/server</h2>
+			<p class="hint">{{.HintSaveLdapServer}}</p>
+			<input name="path" value="/auth/admin/config/ldap/server">
+			<textarea name="body" rows="16">{{.ExampleLdapServer}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/me</h2>
 			<p class="hint">{{.HintMe}}</p>

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/texts"
 )
 
@@ -15,7 +16,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 	if databaseURL == "" {
 		t.Skip("DATABASE_URL is empty")
 	}
-	store, err := Open_LiveStore(databaseURL, 768, nil)
+	store, err := Open_LiveStore(databaseURL, 768, nil, auth.Settings{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,8 @@ package livestore
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -13,23 +15,63 @@ import (
 	"docssearch/core/internal/texts"
 )
 
+// Ключ рекомендательной блокировки PostgreSQL для создания учётных записей.
+// Под ней считаем пользователей и вставляем нового, чтобы две первые регистрации
+// одновременно не стали администраторами
+const accountsAdvisoryLock = 73100001
+
+// Поля, которые администратор меняет у учётной записи. nil - поле не трогаем
+type AccountPatch struct {
+	DisplayName *string
+	Login       *string
+	Password    *string
+	AccessLevel *int
+	Pending     *bool
+}
+
+const accountColumns = `user_id, login, display_name, access_level, pending, created_at`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scan_Account(row rowScanner) (Account, error) {
+	var account Account
+	err := row.Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel, &account.Pending, &account.CreatedAt)
+	return account, err
+}
+
+// Вход по почте (или старому логину) и паролю. Логин сравнивается без учёта регистра
 func (store *LiveStore) Login_User(ctx context.Context, loginName, password, token string) (LoginResult, error) {
-	var result LoginResult
+	var account Account
 	var passwordHash string
 	err := store.pool.QueryRow(ctx, `
-		SELECT user_id, display_name, access_level, password_hash
-		FROM users WHERE login = $1`, loginName).Scan(&result.UserID, &result.DisplayName, &result.AccessLevel, &passwordHash)
+		SELECT `+accountColumns+`, password_hash
+		FROM users WHERE lower(login) = lower($1)
+		ORDER BY login = $1 DESC
+		LIMIT 1`, strings.TrimSpace(loginName)).
+		Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel, &account.Pending, &account.CreatedAt, &passwordHash)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) != nil) {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return LoginResult{}, err
 	}
-	if _, err := store.pool.Exec(ctx, `INSERT INTO auth_tokens (token, user_id) VALUES ($1, $2)`, token, result.UserID); err != nil {
+	if _, err := store.pool.Exec(ctx, `INSERT INTO auth_tokens (token, user_id) VALUES ($1, $2)`, token, account.UserID); err != nil {
 		return LoginResult{}, err
 	}
-	result.Token = token
-	return result, nil
+	return login_ResultFor(account, token), nil
+}
+
+func login_ResultFor(account Account, token string) LoginResult {
+	return LoginResult{
+		Token:       token,
+		UserID:      account.UserID,
+		Login:       account.Login,
+		DisplayName: account.DisplayName,
+		AccessLevel: account.AccessLevel,
+		Pending:     account.Pending,
+	}
 }
 
 func (store *LiveStore) Delete_AuthToken(ctx context.Context, token string) error {
@@ -43,13 +85,26 @@ func (store *LiveStore) Delete_AuthToken(ctx context.Context, token string) erro
 	return nil
 }
 
+// Учётная запись по токену для всех методов, кроме профиля. Ожидающий подтверждения
+// пользователь получает отказ, как в open-webui: ему доступен только экран ожидания
 func (store *LiveStore) Find_AccountByToken(ctx context.Context, token string) (Account, error) {
-	var account Account
-	err := store.pool.QueryRow(ctx, `
-		SELECT u.user_id, u.login, u.display_name, u.access_level
+	account, err := store.Find_ProfileByToken(ctx, token)
+	if err != nil {
+		return Account{}, err
+	}
+	if account.Pending {
+		return Account{}, ErrAccountPending
+	}
+	return account, nil
+}
+
+// Учётная запись по токену без проверки ожидания: для /me и контакта администратора
+func (store *LiveStore) Find_ProfileByToken(ctx context.Context, token string) (Account, error) {
+	account, err := scan_Account(store.pool.QueryRow(ctx, `
+		SELECT u.user_id, u.login, u.display_name, u.access_level, u.pending, u.created_at
 		FROM auth_tokens t
 		JOIN users u ON u.user_id = t.user_id
-		WHERE t.token = $1`, token).Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel)
+		WHERE t.token = $1`, token))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrUnauthorized
 	}
@@ -60,18 +115,15 @@ func (store *LiveStore) List_Accounts(ctx context.Context, token string) ([]Acco
 	if _, err := store.require_Admin(ctx, token); err != nil {
 		return nil, err
 	}
-	rows, err := store.pool.Query(ctx, `
-		SELECT user_id, login, display_name, access_level
-		FROM users
-		ORDER BY user_id`)
+	rows, err := store.pool.Query(ctx, `SELECT `+accountColumns+` FROM users ORDER BY created_at, user_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	accounts := []Account{}
 	for rows.Next() {
-		var account Account
-		if err := rows.Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel); err != nil {
+		account, err := scan_Account(rows)
+		if err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, account)
@@ -79,7 +131,7 @@ func (store *LiveStore) List_Accounts(ctx context.Context, token string) ([]Acco
 	return accounts, rows.Err()
 }
 
-func (store *LiveStore) Create_Account(ctx context.Context, token, loginName, password, displayName string, accessLevel int) (Account, error) {
+func (store *LiveStore) Create_Account(ctx context.Context, token, loginName, password, displayName string, accessLevel int, pending bool) (Account, error) {
 	if _, err := store.require_Admin(ctx, token); err != nil {
 		return Account{}, err
 	}
@@ -87,45 +139,76 @@ func (store *LiveStore) Create_Account(ctx context.Context, token, loginName, pa
 	if err != nil {
 		return Account{}, err
 	}
-	number, err := store.next_ID(ctx, counterUser)
-	if err != nil {
-		return Account{}, err
-	}
-	userID := "user-" + strconv.Itoa(number)
-	_, err = store.pool.Exec(ctx, `
-		INSERT INTO users (user_id, login, password_hash, display_name, access_level)
-		VALUES ($1, $2, $3, $4, $5)`,
-		userID, loginName, string(hash), displayName, accessLevel)
-	if is_UniqueViolation(err) {
-		return Account{}, ErrLoginTaken
-	}
-	if err != nil {
-		return Account{}, err
-	}
-	return Account{UserID: userID, Login: loginName, DisplayName: displayName, AccessLevel: accessLevel}, nil
+	var account Account
+	err = store.run_AccountsTransaction(ctx, func(tx pgx.Tx, _ int) error {
+		var insertError error
+		account, insertError = insert_Account(ctx, tx, loginName, string(hash), displayName, accessLevel, pending)
+		return insertError
+	})
+	return account, err
 }
 
-func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string, displayName *string, accessLevel *int) (Account, error) {
-	if _, err := store.require_Admin(ctx, token); err != nil {
+func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string, patch AccountPatch) (Account, error) {
+	actor, err := store.require_Admin(ctx, token)
+	if err != nil {
 		return Account{}, err
 	}
-	if displayName == nil && accessLevel == nil {
+	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil {
 		return Account{}, ErrNotFound
 	}
 	account, err := store.find_AccountByID(ctx, userID)
 	if err != nil {
 		return Account{}, err
 	}
-	if displayName != nil {
-		account.DisplayName = strings.TrimSpace(*displayName)
+	// Свою роль администратор не меняет: так в системе не останется без администратора
+	if actor.UserID == account.UserID && check_RoleChanges(account, patch) {
+		return Account{}, ErrAccessDenied
 	}
-	if accessLevel != nil {
-		account.AccessLevel = *accessLevel
+	if patch.DisplayName != nil {
+		account.DisplayName = strings.TrimSpace(*patch.DisplayName)
+	}
+	if patch.Login != nil {
+		account.Login = strings.TrimSpace(*patch.Login)
+		taken, err := check_LoginTaken(ctx, store.pool, account.Login, account.UserID)
+		if err != nil {
+			return Account{}, err
+		}
+		if taken {
+			return Account{}, ErrLoginTaken
+		}
+	}
+	if patch.AccessLevel != nil {
+		account.AccessLevel = *patch.AccessLevel
+	}
+	if patch.Pending != nil {
+		account.Pending = *patch.Pending
 	}
 	_, err = store.pool.Exec(ctx, `
-		UPDATE users SET display_name = $2, access_level = $3 WHERE user_id = $1`,
-		account.UserID, account.DisplayName, account.AccessLevel)
-	return account, err
+		UPDATE users SET display_name = $2, login = $3, access_level = $4, pending = $5 WHERE user_id = $1`,
+		account.UserID, account.DisplayName, account.Login, account.AccessLevel, account.Pending)
+	if is_UniqueViolation(err) {
+		return Account{}, ErrLoginTaken
+	}
+	if err != nil {
+		return Account{}, err
+	}
+	if patch.Password != nil {
+		hash, err := bcrypt.GenerateFromPassword([]byte(*patch.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return Account{}, err
+		}
+		if _, err := store.pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE user_id = $1`, account.UserID, string(hash)); err != nil {
+			return Account{}, err
+		}
+	}
+	return account, nil
+}
+
+func check_RoleChanges(account Account, patch AccountPatch) bool {
+	if patch.AccessLevel != nil && *patch.AccessLevel != account.AccessLevel {
+		return true
+	}
+	return patch.Pending != nil && *patch.Pending != account.Pending
 }
 
 func (store *LiveStore) require_Admin(ctx context.Context, token string) (Account, error) {
@@ -140,14 +223,80 @@ func (store *LiveStore) require_Admin(ctx context.Context, token string) (Accoun
 }
 
 func (store *LiveStore) find_AccountByID(ctx context.Context, userID string) (Account, error) {
-	var account Account
-	err := store.pool.QueryRow(ctx, `
-		SELECT user_id, login, display_name, access_level FROM users WHERE user_id = $1`, userID).
-		Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel)
+	account, err := scan_Account(store.pool.QueryRow(ctx, `SELECT `+accountColumns+` FROM users WHERE user_id = $1`, userID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrNotFound
 	}
 	return account, err
+}
+
+// Транзакция под блокировкой создания учётных записей. usersBefore - сколько пользователей было до неё
+func (store *LiveStore) run_AccountsTransaction(ctx context.Context, work func(tx pgx.Tx, usersBefore int) error) error {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, accountsAdvisoryLock); err != nil {
+		return err
+	}
+	var usersBefore int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&usersBefore); err != nil {
+		return err
+	}
+	if err := work(tx, usersBefore); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func insert_Account(ctx context.Context, tx pgx.Tx, loginName, passwordHash, displayName string, accessLevel int, pending bool) (Account, error) {
+	taken, err := check_LoginTaken(ctx, tx, loginName, "")
+	if err != nil {
+		return Account{}, err
+	}
+	if taken {
+		return Account{}, ErrLoginTaken
+	}
+	number, err := next_IDWith(ctx, tx, counterUser)
+	if err != nil {
+		return Account{}, err
+	}
+	userID := "user-" + strconv.Itoa(number)
+	account, err := scan_Account(tx.QueryRow(ctx, `
+		INSERT INTO users (user_id, login, password_hash, display_name, access_level, pending)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+accountColumns,
+		userID, loginName, passwordHash, displayName, accessLevel, pending))
+	if is_UniqueViolation(err) {
+		return Account{}, ErrLoginTaken
+	}
+	return account, err
+}
+
+// Логин занят другой учётной записью, без учёта регистра
+func check_LoginTaken(ctx context.Context, querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, loginName, exceptUserID string) (bool, error) {
+	var taken bool
+	err := querier.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM users WHERE lower(login) = lower($1) AND user_id <> $2)`, loginName, exceptUserID).Scan(&taken)
+	return taken, err
+}
+
+func insert_AuthToken(ctx context.Context, tx pgx.Tx, token, userID string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO auth_tokens (token, user_id) VALUES ($1, $2)`, token, userID)
+	return err
+}
+
+// Пароль доменной учётной записи живёт только в каталоге. Локально - случайный хеш, как в open-webui
+func create_UnusablePasswordHash() (string, error) {
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(randomBytes)), bcrypt.DefaultCost)
+	return string(hash), err
 }
 
 func is_UniqueViolation(err error) bool {

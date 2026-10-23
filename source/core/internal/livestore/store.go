@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/texts"
 )
 
@@ -30,6 +31,9 @@ var (
 	ErrEmbedSize          = errors.New("embed size")
 	ErrEmbedUnavailable   = errors.New("embed unavailable")
 	ErrUnsupportedFile    = errors.New("unsupported file")
+	ErrSignupDisabled     = errors.New("signup disabled")
+	ErrAccountPending     = errors.New("account pending")
+	ErrLdapDisabled       = errors.New("ldap disabled")
 )
 
 type Embedder interface {
@@ -41,13 +45,17 @@ type Account struct {
 	Login       string
 	DisplayName string
 	AccessLevel int
+	Pending     bool
+	CreatedAt   time.Time
 }
 
 type LoginResult struct {
 	Token       string
 	UserID      string
+	Login       string
 	DisplayName string
 	AccessLevel int
+	Pending     bool
 }
 
 type DocumentLine struct {
@@ -80,12 +88,14 @@ type SimilarChunk struct {
 }
 
 type LiveStore struct {
-	pool       *pgxpool.Pool
-	dimensions int
-	embedder   Embedder
+	pool         *pgxpool.Pool
+	dimensions   int
+	embedder     Embedder
+	authDefaults auth.Settings
 }
 
-func Open_LiveStore(databaseURL string, dimensions int, embedder Embedder) (*LiveStore, error) {
+// Учётных записей по умолчанию нет: первая регистрация создаёт администратора, как в open-webui
+func Open_LiveStore(databaseURL string, dimensions int, embedder Embedder, authDefaults auth.Settings) (*LiveStore, error) {
 	if strings.TrimSpace(databaseURL) == "" {
 		return nil, errors.New(texts.LiveDatabaseMissing)
 	}
@@ -102,12 +112,8 @@ func Open_LiveStore(databaseURL string, dimensions int, embedder Embedder) (*Liv
 		pool.Close()
 		return nil, errors.New(texts.LiveDatabaseConnect)
 	}
-	store := &LiveStore{pool: pool, dimensions: dimensions, embedder: embedder}
+	store := &LiveStore{pool: pool, dimensions: dimensions, embedder: embedder, authDefaults: authDefaults}
 	if err := store.apply_Schema(ctx); err != nil {
-		pool.Close()
-		return nil, err
-	}
-	if err := store.seed_Users(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -143,44 +149,16 @@ func read_MigrationSQL() (string, error) {
 	return "", errors.New("migrations/001_init.sql")
 }
 
-func (store *LiveStore) seed_Users(ctx context.Context) error {
-	seeds := []struct {
-		id          string
-		login       string
-		password    string
-		displayName string
-		accessLevel int
-	}{
-		{texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel},
-		{texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel},
-	}
-	for _, seed := range seeds {
-		var exists bool
-		if err := store.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1)`, seed.id).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			continue
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(seed.password), bcrypt.DefaultCost)
-		if err != nil {
-			return err
-		}
-		_, err = store.pool.Exec(ctx, `
-			INSERT INTO users (user_id, login, password_hash, display_name, access_level)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (user_id) DO NOTHING`,
-			seed.id, seed.login, string(hash), seed.displayName, seed.accessLevel)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+func (store *LiveStore) next_ID(ctx context.Context, name string) (int, error) {
+	return next_IDWith(ctx, store.pool, name)
 }
 
-func (store *LiveStore) next_ID(ctx context.Context, name string) (int, error) {
+// Счётчик можно взять и внутри транзакции, тогда номер откатится вместе с ней
+func next_IDWith(ctx context.Context, querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, name string) (int, error) {
 	var value int
-	err := store.pool.QueryRow(ctx, `
+	err := querier.QueryRow(ctx, `
 		UPDATE id_counters SET value = value + 1 WHERE name = $1 RETURNING value - 1`, name).Scan(&value)
 	return value, err
 }

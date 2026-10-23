@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS users (
 	login text UNIQUE NOT NULL,
 	password_hash text NOT NULL,
 	display_name text NOT NULL,
-	access_level int NOT NULL
+	access_level int NOT NULL,
+	pending boolean NOT NULL DEFAULT false,
+	created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS auth_tokens (
@@ -74,11 +76,21 @@ CREATE TABLE IF NOT EXISTS id_counters (
 );
 
 INSERT INTO id_counters (name, value) VALUES
-	('user', 2),
+	('user', 1),
 	('document', 1),
 	('session', 1),
 	('audit', 1)
 ON CONFLICT (name) DO NOTHING;
+
+-- Настройки входа из админ-панели: регистрация, роль по умолчанию, LDAP. Ключ - раздел, значение - JSON
+CREATE TABLE IF NOT EXISTS app_settings (
+	key text PRIMARY KEY,
+	value jsonb NOT NULL,
+	updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pending boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT '';
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();

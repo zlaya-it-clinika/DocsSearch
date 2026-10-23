@@ -1,17 +1,24 @@
-// Вкладка «Пользователи»: список, поиск, добавление, смена имени и роли.
+// Вкладка «Пользователи», как в open-webui: список, поиск, добавление, смена имени, почты, пароля и роли.
 import { create_User, list_Users, update_User } from '../api.js';
 import { open_Modal } from '../components/modal.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Button, create_Element, create_EmptyBlock, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
-import { get_Initials } from '../lib/format.js';
-import { Roles, get_AccessLevelForRole, get_RoleLabel, get_UserRole } from '../roles.js';
-import { AdminTexts, AppTexts, get_ErrorText } from '../texts.js';
+import { format_DateTime, get_Initials } from '../lib/format.js';
+import { Roles, get_NextRole, get_RoleLabel, get_UserRole, roleChoices } from '../roles.js';
+import { AdminTexts, AppTexts, format_Text, get_ErrorText } from '../texts.js';
 
 function create_RoleSelect(selectedRole, id) {
-	return create_Element('select', { className: 'select', attrs: { id } }, [Roles.user, Roles.admin].map((role) => create_Element('option', {
+	return create_Element('select', { className: 'select', attrs: { id } }, roleChoices.map((role) => create_Element('option', {
 		text: get_RoleLabel(role),
 		attrs: { value: role, selected: role === selectedRole },
 	})));
+}
+
+function get_RoleBadgeClass(role) {
+	if (role === Roles.admin) {
+		return 'badge badge-strong';
+	}
+	return role === Roles.pending ? 'badge badge-outline' : 'badge';
 }
 
 function create_Field(id, label, control, hint = '') {
@@ -22,31 +29,32 @@ function create_Field(id, label, control, hint = '') {
 	]);
 }
 
-// Общая форма для создания и правки. При правке логин и пароль не меняются: этого нет в контракте
-function open_UserForm({ config, account, onSaved }) {
+// Общая форма для создания и правки. При правке пароль меняется, только если поле заполнено.
+// Свою роль администратор не меняет: ядро такой запрос отклонит
+function open_UserForm({ config, account, currentUserId, onSaved }) {
 	const isEdit = Boolean(account);
+	const isSelf = isEdit && account.userId === currentUserId;
 	const errorBox = create_Element('div', { className: 'form-error', attrs: { role: 'alert' } });
 	errorBox.hidden = true;
 
-	const loginInput = create_Element('input', { className: 'input', attrs: { id: 'user-login', autocomplete: 'off', required: true } });
-	const passwordInput = create_Element('input', { className: 'input', attrs: { id: 'user-password', type: 'password', autocomplete: 'new-password', required: true } });
+	const loginInput = create_Element('input', { className: 'input', attrs: { id: 'user-login', type: 'email', autocomplete: 'off', required: true } });
+	const passwordInput = create_Element('input', { className: 'input', attrs: { id: 'user-password', type: 'password', autocomplete: 'new-password', required: !isEdit } });
 	const nameInput = create_Element('input', { className: 'input', attrs: { id: 'user-name', autocomplete: 'off', required: true } });
-	const roleSelect = create_RoleSelect(isEdit ? get_UserRole(account, config) : Roles.user, 'user-role');
+	const initialRole = isEdit ? get_UserRole(account, config) : Roles.user;
+	const roleSelect = create_RoleSelect(initialRole, 'user-role');
+	roleSelect.disabled = isSelf;
 	if (isEdit) {
 		nameInput.value = account.displayName;
+		loginInput.value = account.login;
 	}
 
-	const fields = isEdit
-		? [create_Field('user-name', AdminTexts.usersFieldName, nameInput), create_Field('user-role', AdminTexts.usersFieldRole, roleSelect)]
-		: [
-			create_Field('user-login', AdminTexts.usersFieldLogin, loginInput),
-			create_Field('user-password', AdminTexts.usersFieldPassword, passwordInput),
-			create_Field('user-name', AdminTexts.usersFieldName, nameInput),
-			create_Field('user-role', AdminTexts.usersFieldRole, roleSelect),
-		];
-
 	const form = create_Element('form', { className: 'form-grid', attrs: { novalidate: true, id: 'user-form' } }, [
-		...fields,
+		create_Field('user-name', AdminTexts.usersFieldName, nameInput),
+		create_Field('user-login', AdminTexts.usersFieldLogin, loginInput),
+		isEdit
+			? create_Field('user-password', AdminTexts.usersFieldNewPassword, passwordInput, AdminTexts.usersFieldNewPasswordHint)
+			: create_Field('user-password', AdminTexts.usersFieldPassword, passwordInput),
+		create_Field('user-role', AdminTexts.usersFieldRole, roleSelect, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRoleHint),
 		create_Element('div', { className: 'field-wide' }, [errorBox]),
 	]);
 	const submitButton = create_Button(AppTexts.save, { variant: 'primary', type: 'submit', attrs: { form: 'user-form' } });
@@ -60,22 +68,50 @@ function open_UserForm({ config, account, onSaved }) {
 		],
 	});
 
+	// Только изменённые поля: так правка имени не трогает роль и пароль
+	const build_Changes = () => {
+		const changes = {};
+		const displayName = nameInput.value.trim();
+		const login = loginInput.value.trim();
+		if (displayName !== account.displayName) {
+			changes.displayName = displayName;
+		}
+		if (login !== account.login) {
+			changes.login = login;
+		}
+		if (passwordInput.value !== '') {
+			changes.password = passwordInput.value;
+		}
+		if (!isSelf && roleSelect.value !== initialRole) {
+			changes.role = roleSelect.value;
+		}
+		return changes;
+	};
+
 	form.addEventListener('submit', async (event) => {
 		event.preventDefault();
-		const displayName = nameInput.value.trim();
-		const accessLevel = get_AccessLevelForRole(roleSelect.value, config);
-		const required = isEdit ? [nameInput] : [loginInput, passwordInput, nameInput];
+		const required = isEdit ? [nameInput, loginInput] : [nameInput, loginInput, passwordInput];
 		const emptyField = required.find((input) => input.value.trim() === '');
 		if (emptyField) {
 			emptyField.focus();
 			return;
 		}
 		errorBox.hidden = true;
+		const changes = isEdit ? build_Changes() : null;
+		if (isEdit && Object.keys(changes).length === 0) {
+			modal.close();
+			return;
+		}
 		submitButton.disabled = true;
 		try {
 			const saved = isEdit
-				? await update_User(account.userId, { displayName, accessLevel })
-				: await create_User({ login: loginInput.value.trim(), password: passwordInput.value, displayName, accessLevel });
+				? await update_User(account.userId, changes)
+				: await create_User({
+					login: loginInput.value.trim(),
+					password: passwordInput.value,
+					displayName: nameInput.value.trim(),
+					role: roleSelect.value,
+				});
 			modal.close();
 			show_Toast(isEdit ? AdminTexts.usersUpdated : AdminTexts.usersCreated, 'success');
 			onSaved(saved);
@@ -86,7 +122,7 @@ function open_UserForm({ config, account, onSaved }) {
 			submitButton.disabled = false;
 		}
 	});
-	(isEdit ? nameInput : loginInput).focus();
+	nameInput.focus();
 }
 
 export function create_UsersTab({ user, config }) {
@@ -94,6 +130,8 @@ export function create_UsersTab({ user, config }) {
 	let query = '';
 
 	const countLabel = create_Element('span', { className: 'section-count' });
+	const pendingLabel = create_Element('span', { className: 'badge badge-outline' });
+	pendingLabel.hidden = true;
 	const content = create_Element('div', {}, [create_LoadingBlock(AppTexts.loading)]);
 
 	const reload = async () => {
@@ -110,9 +148,9 @@ export function create_UsersTab({ user, config }) {
 	};
 
 	const toggle_Role = async (account) => {
-		const nextRole = get_UserRole(account, config) === Roles.admin ? Roles.user : Roles.admin;
+		const nextRole = get_NextRole(get_UserRole(account, config));
 		try {
-			const saved = await update_User(account.userId, { accessLevel: get_AccessLevelForRole(nextRole, config) });
+			const saved = await update_User(account.userId, { role: nextRole });
 			Object.assign(account, saved);
 			render_Table();
 			show_Toast(AdminTexts.usersRoleChanged, 'success');
@@ -126,7 +164,7 @@ export function create_UsersTab({ user, config }) {
 		const isSelf = account.userId === user.userId;
 		// Себе роль не меняем, чтобы администратор случайно не потерял доступ к панели
 		return create_Element('button', {
-			className: role === Roles.admin ? 'badge badge-strong' : 'badge',
+			className: get_RoleBadgeClass(role),
 			text: get_RoleLabel(role),
 			attrs: {
 				type: 'button',
@@ -139,6 +177,9 @@ export function create_UsersTab({ user, config }) {
 
 	function render_Table() {
 		countLabel.textContent = String(accounts.length);
+		const pendingCount = accounts.filter((account) => get_UserRole(account, config) === Roles.pending).length;
+		pendingLabel.textContent = format_Text(AdminTexts.usersPendingCount, { count: pendingCount });
+		pendingLabel.hidden = pendingCount === 0;
 		const filtered = query
 			? accounts.filter((account) => `${account.displayName} ${account.login}`.toLowerCase().includes(query))
 			: accounts;
@@ -152,6 +193,7 @@ export function create_UsersTab({ user, config }) {
 					create_Element('th', { text: AdminTexts.usersColumnRole }),
 					create_Element('th', { text: AdminTexts.usersColumnName }),
 					create_Element('th', { text: AdminTexts.usersColumnLogin }),
+					create_Element('th', { text: AdminTexts.usersColumnCreated }),
 					create_Element('th', { text: AdminTexts.usersColumnId }),
 					create_Element('th', { className: 'table-cell-actions' }),
 				])]),
@@ -163,11 +205,13 @@ export function create_UsersTab({ user, config }) {
 						account.userId === user.userId ? create_Element('span', { className: 'badge badge-outline', text: AdminTexts.usersYou }) : null,
 					])]),
 					create_Element('td', { className: 'table-cell-muted', text: account.login }),
+					create_Element('td', { className: 'time-cell', text: format_DateTime(account.createdAt) || AppTexts.notSpecified }),
 					create_Element('td', { className: 'table-cell-muted', text: account.userId }),
 					create_Element('td', { className: 'table-cell-actions' }, [
 						create_IconButton('edit', `${AdminTexts.usersEdit}: ${account.displayName}`, () => open_UserForm({
 							config,
 							account,
+							currentUserId: user.userId,
 							onSaved: (saved) => {
 								Object.assign(account, saved);
 								render_Table();
@@ -181,7 +225,7 @@ export function create_UsersTab({ user, config }) {
 
 	const element = create_Element('section', { className: 'page-section' }, [
 		create_Element('div', { className: 'section-header' }, [
-			create_Element('h2', { className: 'section-title' }, [AdminTexts.tabUsers, countLabel]),
+			create_Element('h2', { className: 'section-title' }, [AdminTexts.tabUsers, countLabel, pendingLabel]),
 			create_Element('div', { className: 'section-tools' }, [
 				create_SearchBox(AdminTexts.usersSearch, (value) => {
 					query = value;
@@ -193,6 +237,7 @@ export function create_UsersTab({ user, config }) {
 					onClick: () => open_UserForm({
 						config,
 						account: null,
+						currentUserId: user.userId,
 						onSaved: (saved) => {
 							accounts.push(saved);
 							render_Table();

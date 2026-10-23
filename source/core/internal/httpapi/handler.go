@@ -44,21 +44,26 @@ func (writer *statusWriter) Write(payload []byte) (int, error) {
 
 func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 	var routeMux *http.ServeMux
+	var routeHandler http.Handler
 	if strings.EqualFold(loadedConfig.Mode, config.ModeLive) {
 		if strings.TrimSpace(loadedConfig.DatabaseURL) == "" {
 			return nil, errors.New(texts.LiveDatabaseMissing)
 		}
 		embedder := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel, loadedConfig.OllamaChatModel)
-		store, err := livestore.Open_LiveStore(loadedConfig.DatabaseURL, loadedConfig.OllamaEmbedDimensions, embedder)
+		store, err := livestore.Open_LiveStore(loadedConfig.DatabaseURL, loadedConfig.OllamaEmbedDimensions, embedder, loadedConfig.AuthDefaults)
 		if err != nil {
 			return nil, err
 		}
 		routeMux = register_LiveRoutes(store, embedder)
+		routeHandler = routeMux
 	} else {
-		routeMux = create_StubStore().register_StubRoutes()
+		stubStore := create_StubStore(loadedConfig.StubWithoutUsers, loadedConfig.AuthDefaults)
+		routeMux = stubStore.register_StubRoutes()
+		// В боевом режиме ожидающих отсекает хранилище, в заглушке - эта обёртка
+		routeHandler = stubStore.reject_PendingUsers(routeMux)
 	}
 	register_DocsRoutes(routeMux, create_DocsGate(loadedConfig.DocsPassword))
-	return log_RequestsWhenDebug(loadedConfig.Debug, allow_CrossOrigin(routeMux)), nil
+	return log_RequestsWhenDebug(loadedConfig.Debug, allow_CrossOrigin(routeHandler)), nil
 }
 
 func allow_CrossOrigin(nextHandler http.Handler) http.Handler {
