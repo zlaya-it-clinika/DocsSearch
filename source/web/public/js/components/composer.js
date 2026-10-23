@@ -1,16 +1,16 @@
 // Поле ввода чата: растёт по мере набора, Enter отправляет, Shift+Enter переносит строку.
 // Кнопка «+» прикрепляет черновик на проверку.
 import { create_Element, create_Icon, create_IconButton } from '../lib/dom.js';
+import { build_AcceptAttribute, validate_UploadFile } from '../lib/files.js';
 import { format_FileSize } from '../lib/format.js';
 import { ChatTexts, format_Text } from '../texts.js';
 import { show_Toast } from './toast.js';
 
 const maxInputHeight = 220;
-// Подсказка для окна выбора файла. Окончательно формат проверяет ядро
-const draftFileAccept = '.txt,.md,.rtf,.doc,.docx,.odt,.pdf';
 
 // onSubmit({ text, file }) должен вернуть Promise, поле блокируется до его завершения
-export function create_Composer({ onSubmit, allowAttach = true, maxUploadBytes = 0 }) {
+// config: настройки веб-сервера, из них берутся допустимые форматы и размер файла
+export function create_Composer({ onSubmit, allowAttach = true, config }) {
 	let attachedFile = null;
 	let busy = false;
 	let basePlaceholder = ChatTexts.placeholder;
@@ -23,7 +23,7 @@ export function create_Composer({ onSubmit, allowAttach = true, maxUploadBytes =
 	attachmentsRow.hidden = true;
 
 	const fileInput = create_Element('input', {
-		attrs: { type: 'file', accept: draftFileAccept, hidden: true, tabindex: -1 },
+		attrs: { type: 'file', accept: build_AcceptAttribute(config), hidden: true, tabindex: -1 },
 	});
 	const attachButton = create_IconButton('plus', ChatTexts.attach, () => fileInput.click());
 	attachButton.hidden = !allowAttach;
@@ -148,8 +148,9 @@ export function create_Composer({ onSubmit, allowAttach = true, maxUploadBytes =
 			if (!allowAttach) {
 				return;
 			}
-			if (maxUploadBytes > 0 && file.size > maxUploadBytes) {
-				show_Toast(format_Text(ChatTexts.fileTooLarge, { size: format_FileSize(maxUploadBytes) }), 'error');
+			const problem = validate_UploadFile(file, config);
+			if (problem) {
+				show_Toast(problem, 'error');
 				return;
 			}
 			attachedFile = file;

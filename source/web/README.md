@@ -81,6 +81,7 @@ flowchart LR
 | `COOKIE_SECURE`, `COOKIE_SAMESITE` | режим cookie |
 | `EMBED_ALLOWED_ORIGINS` | порталы, которым можно встраивать виджет |
 | `MAX_UPLOAD_MB` | предел размера файла |
+| `ALLOWED_UPLOAD_EXTENSIONS` | форматы файлов, которые принимает ядро: `.txt .pdf .docx` |
 | `LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MINUTES` | защита входа от перебора |
 
 ## Docker

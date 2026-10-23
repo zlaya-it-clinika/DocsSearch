@@ -37,7 +37,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 	const composer = create_Composer({
 		onSubmit: (payload) => handle_Submit(payload),
 		allowAttach: true,
-		maxUploadBytes: config.maxUploadBytes,
+		config,
 	});
 	const footer = create_Element('div', { className: 'chat-footer' }, [
 		composer.element,

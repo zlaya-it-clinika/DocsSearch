@@ -44,6 +44,7 @@ function build_PublicConfig(config) {
 		adminAccessLevel: config.adminAccessLevel,
 		userAccessLevel: config.userAccessLevel,
 		maxUploadBytes: config.maxUploadBytes,
+		allowedUploadExtensions: config.allowedUploadExtensions,
 		debug: config.debug,
 	};
 }
