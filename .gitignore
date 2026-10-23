@@ -37,7 +37,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Python: бот и RAG
+# Python: RAG
 __pycache__/
 *.py[cod]
 .venv/
