@@ -64,6 +64,7 @@ flowchart LR
 - [source/web](source/web) - страница чата и попап-виджет для внутреннего портала. Стек не выбран. Свой Docker, отдельно от ядра
 - [source/electron](source/electron) - десктоп-клиент после прототипа. Стек не выбран
 - Docker ядра: `Dockerfile` и `docker-compose` в [source/core](source/core), сервисы только API и PostgreSQL с pgvector
+- Общий Docker всего проекта: [source/docker-compose.yml](source/docker-compose.yml) поднимает PostgreSQL, ядро и веб одной командой, Ollama по желанию. Инструкция в [source/README.md](source/README.md)
 - Ollama остаётся локальным процессом. Адрес и имена моделей задаются в `.env`
 
 Переменные `.env`:

@@ -67,6 +67,8 @@ ollama pull qwen2.5:7b
 curl -s http://127.0.0.1:11434/api/embed -d "{\"model\":\"nomic-embed-text\",\"input\":[\"проверка\"]}" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).embeddings[0].length))"
 ```
 
+Шаги 3-5 можно заменить одной командой: общий `docker compose` в каталоге `source` поднимает PostgreSQL, ядро и веб сразу, а с профилем `ollama` и саму Ollama с моделями. Инструкция в [source/README.md](source/README.md). Ниже - запуск по отдельности, удобный для разработки.
+
 ## Шаг 3. Запустить PostgreSQL
 
 ```bash
