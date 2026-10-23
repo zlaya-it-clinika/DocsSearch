@@ -3,9 +3,10 @@ import { build_DocumentFileUrl, list_Documents, upload_Document } from '../api.j
 import { open_Modal } from '../components/modal.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
+import { build_AcceptAttribute, format_AllowedExtensions, validate_UploadFile } from '../lib/files.js';
 import { format_FileSize } from '../lib/format.js';
 import { Roles, get_AccessLevelForRole, get_DocumentAudience, get_DocumentAudienceLabel } from '../roles.js';
-import { AdminTexts, AppTexts, DocumentsTexts, RoleTexts, format_Text, ChatTexts, get_ErrorText } from '../texts.js';
+import { AdminTexts, AppTexts, DocumentsTexts, FileTexts, RoleTexts, format_Text, get_ErrorText } from '../texts.js';
 
 function create_Field(id, label, control, hint = '', wide = false) {
 	return create_Element('div', { className: wide ? 'field field-wide' : 'field' }, [
@@ -23,12 +24,17 @@ function open_UploadForm({ config, document, onUploaded }) {
 	const errorBox = create_Element('div', { className: 'form-error', attrs: { role: 'alert' } });
 	errorBox.hidden = true;
 
-	const fileInput = create_Element('input', { attrs: { id: 'document-file', type: 'file', hidden: true } });
+	const fileInput = create_Element('input', { attrs: { id: 'document-file', type: 'file', accept: build_AcceptAttribute(config), hidden: true } });
 	const dropName = create_Element('span', { className: 'file-drop-name' });
 	const dropZone = create_Element('div', {
 		className: 'file-drop',
 		attrs: { role: 'button', tabindex: 0, 'aria-label': AdminTexts.knowledgeDropLead },
-	}, [create_Icon('upload', 'icon-lg'), create_Element('span', { text: AdminTexts.knowledgeDropLead }), dropName]);
+	}, [
+		create_Icon('upload', 'icon-lg'),
+		create_Element('span', { text: AdminTexts.knowledgeDropLead }),
+		create_Element('span', { className: 'field-hint', text: format_Text(FileTexts.allowedHint, { list: format_AllowedExtensions(config) }) }),
+		dropName,
+	]);
 
 	const titleInput = create_Element('input', { className: 'input', attrs: { id: 'document-title', autocomplete: 'off' } });
 	const editionInput = create_Element('input', { className: 'input', attrs: { id: 'document-edition', autocomplete: 'off' } });
@@ -46,10 +52,13 @@ function open_UploadForm({ config, document, onUploaded }) {
 		if (!file) {
 			return;
 		}
-		if (config.maxUploadBytes > 0 && file.size > config.maxUploadBytes) {
-			show_Toast(format_Text(ChatTexts.fileTooLarge, { size: format_FileSize(config.maxUploadBytes) }), 'error');
+		const problem = validate_UploadFile(file, config);
+		if (problem) {
+			errorBox.textContent = problem;
+			errorBox.hidden = false;
 			return;
 		}
+		errorBox.hidden = true;
 		selectedFile = file;
 		dropName.textContent = `${file.name} · ${format_FileSize(file.size)}`;
 		if (!isNewEdition && titleInput.value.trim() === '') {

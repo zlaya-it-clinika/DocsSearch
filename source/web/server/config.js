@@ -43,6 +43,13 @@ function read_List(name) {
 	return read_String(name).split(/\s+/).filter(Boolean);
 }
 
+// Расширения в нижнем регистре с точкой: "txt pdf" -> [".txt", ".pdf"]
+function read_Extensions(name, fallback) {
+	const list = read_List(name);
+	const source = list.length > 0 ? list : fallback;
+	return source.map((item) => item.toLowerCase().replace(/^\.?/, '.'));
+}
+
 function normalize_SameSite(raw) {
 	const found = allowedSameSite.find((value) => value.toLowerCase() === raw.toLowerCase());
 	return found ?? '';
@@ -83,6 +90,8 @@ export function load_Config() {
 		cookieSameSite,
 		embedAllowedOrigins: read_List('EMBED_ALLOWED_ORIGINS'),
 		maxUploadBytes: read_Integer('MAX_UPLOAD_MB', 20) * 1024 * 1024,
+		// Те же форматы, что разбирает ядро. Клиент проверяет файл до отправки
+		allowedUploadExtensions: read_Extensions('ALLOWED_UPLOAD_EXTENSIONS', ['.txt', '.pdf', '.docx']),
 		maxJsonBytes: 1024 * 1024,
 		loginMaxAttempts: read_Integer('LOGIN_MAX_ATTEMPTS', 10),
 		loginWindowMs: read_Integer('LOGIN_WINDOW_MINUTES', 15) * 60 * 1000,

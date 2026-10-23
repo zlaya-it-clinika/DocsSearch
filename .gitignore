@@ -1,1 +1,83 @@
+# Секреты и локальные настройки. Шаблоны .env.example остаются в репозитории
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Артефакты сборки (build.sh кладёт их в build/)
 build/
+dist/
+out/
+release/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go: бинарник go build в каталоге ядра, тесты, профили, покрытие
+/source/core/api
+/source/core/api.exe
+*.test
+*.out
+*.prof
+coverage/
+go.work
+go.work.sum
+
+# Node.js: зависимости, кэши, логи пакетных менеджеров
+node_modules/
+.npm/
+.eslintcache
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python: бот и RAG
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Локальные данные сервисов и временные файлы
+*.db
+*.sqlite
+*.sqlite3
+.ollama/
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# Docker: локальные переопределения compose
+docker-compose.override.yml
+compose.override.yml
+
+# Редакторы и локальные настройки инструментов
+.idea/
+.vscode/
+.fleet/
+.cursor/
+.claude/
+*.code-workspace
+
+# Системные файлы Windows и macOS
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*

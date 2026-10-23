@@ -87,7 +87,6 @@ export const ChatTexts = Object.freeze({
 	startNew: 'Начать новый чат',
 	copyMessage: 'Копировать текст',
 	repeatQuestion: 'Задать вопрос ещё раз',
-	fileTooLarge: 'Файл больше {size}',
 	kindClarify: 'Уточнение',
 	kindFallback: 'Нет в базе знаний',
 	kindAccessDenied: 'Недостаточно прав',
@@ -197,6 +196,13 @@ export const AdminTexts = Object.freeze({
 	auditLoadFailed: 'Не удалось загрузить журнал',
 });
 
+export const FileTexts = Object.freeze({
+	typeNotAllowed: 'Этот формат не поддерживается. Подходят: {list}',
+	tooLarge: 'Файл больше {size}',
+	empty: 'Файл пустой',
+	allowedHint: 'Форматы: {list}',
+});
+
 export const FormatTexts = Object.freeze({
 	bytes: 'Б',
 	kilobytes: 'КБ',
@@ -218,8 +224,11 @@ export const ErrorTexts = Object.freeze({
 	access_denied: 'Недостаточно прав для этого действия',
 	not_found: 'Не найдено',
 	login_taken: 'Такой логин уже занят',
-	invalid_body: 'Сервер не принял данные. Проверьте заполнение полей.',
+	invalid_body: 'Сервер не принял данные. Проверьте заполнение полей и формат файла.',
 	live_not_ready: 'Боевой режим ядра ещё не включён',
+	embed_unavailable: 'Не удалось проиндексировать документ: локальная модель эмбеддингов недоступна. Проверьте, что Ollama запущена.',
+	embed_size_mismatch: 'Модель эмбеддингов вернула вектор другого размера. Проверьте OLLAMA_EMBED_DIMENSIONS в настройках ядра.',
+	store_unavailable: 'База данных ядра недоступна. Попробуйте позже.',
 	core_unavailable: 'Ядро недоступно. Проверьте, что оно запущено.',
 	core_timeout: 'Ядро не ответило вовремя. Попробуйте ещё раз.',
 	payload_too_large: 'Файл слишком большой',

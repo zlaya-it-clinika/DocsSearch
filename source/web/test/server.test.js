@@ -120,6 +120,14 @@ test('вход отдаёт пользователя без токена ядр�
 	assert.ok(!setCookie.includes(testToken));
 });
 
+test('публичные настройки отдают роли и допустимые форматы файлов', async () => {
+	const response = await fetch(`${webUrl}/api/config`);
+	const config = await response.json();
+	assert.equal(config.adminAccessLevel, 2);
+	assert.deepEqual(config.allowedUploadExtensions, ['.txt', '.pdf', '.docx']);
+	assert.equal(config.maxUploadBytes, 1024 * 1024);
+});
+
 test('прокси добавляет Bearer-токен ядра и отдаёт ответ', async () => {
 	const { cookie } = await login_AsTestUser();
 	const response = await fetch(`${webUrl}/api/me`, { headers: { cookie } });
