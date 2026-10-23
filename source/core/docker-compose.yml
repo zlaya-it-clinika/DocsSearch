@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: docs
+      POSTGRES_PASSWORD: docs
+      POSTGRES_DB: docssearch
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docs -d docssearch"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+  api:
+    build: .
+    environment:
+      API_MODE: live
+      API_PORT: "8080"
+      DATABASE_URL: postgres://docs:docs@postgres:5432/docssearch?sslmode=disable
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_EMBED_MODEL: nomic-embed-text
+      OLLAMA_EMBED_DIMENSIONS: "768"
+      DOCS_PASSWORD: docs
+      DEBUG: "false"
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy

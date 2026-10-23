@@ -16,7 +16,7 @@ import (
 )
 
 func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
-	handler := NewHandler(config.Config{Mode: config.ModeStub})
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
 	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
 	adminToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
 
@@ -214,18 +214,10 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 }
 
-func TestLiveModeIsNotReady(t *testing.T) {
-	handler := NewHandler(config.Config{Mode: config.ModeLive})
-	response := doJSON(t, handler, http.MethodPost, "/auth/login", "", map[string]string{
-		"login":    texts.SeedAdminLogin,
-		"password": texts.SeedAdminPassword,
-	})
-	if response.Code != http.StatusNotImplemented {
-		t.Fatalf("live status %d", response.Code)
-	}
-	body := decodeJSON[errorBody](t, response)
-	if body.Error != texts.ErrorLiveNotReady {
-		t.Fatalf("live body %+v", body)
+func TestLiveModeRequiresDatabase(t *testing.T) {
+	_, err := NewHandler(config.Config{Mode: config.ModeLive})
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("live startup error %v", err)
 	}
 }
 
@@ -235,7 +227,7 @@ func TestDebugLogSkipsSecrets(t *testing.T) {
 	setLogWriter(&logs)
 	defer setLogWriter(original)
 
-	handler := NewHandler(config.Config{Mode: config.ModeStub, Debug: true})
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub, Debug: true})
 	response := doJSON(t, handler, http.MethodPost, "/auth/login", "", map[string]string{
 		"login":    texts.SeedEmployeeLogin,
 		"password": texts.SeedEmployeePassword,
@@ -250,6 +242,15 @@ func TestDebugLogSkipsSecrets(t *testing.T) {
 	if !strings.Contains(line, "POST /auth/login 200") {
 		t.Fatalf("debug log %s", line)
 	}
+}
+
+func must_Handler(t *testing.T, loadedConfig config.Config) http.Handler {
+	t.Helper()
+	handler, err := NewHandler(loadedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
 }
 
 func login(t *testing.T, handler http.Handler, loginName, password string) string {

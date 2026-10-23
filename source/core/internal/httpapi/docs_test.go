@@ -13,7 +13,7 @@ import (
 )
 
 func TestDocsRequiresPasswordFromConfig(t *testing.T) {
-	handler := NewHandler(config.Config{Mode: config.ModeStub, DocsPassword: "secret"})
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub, DocsPassword: "secret"})
 
 	locked := doRaw(t, handler, http.MethodGet, "/docs", "", nil, "")
 	if locked.Code != http.StatusOK {
@@ -56,7 +56,7 @@ func TestDocsRequiresPasswordFromConfig(t *testing.T) {
 }
 
 func TestDocsStaysClosedWithoutConfiguredPassword(t *testing.T) {
-	handler := NewHandler(config.Config{Mode: config.ModeStub})
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
 	page := doRaw(t, handler, http.MethodGet, "/docs", "", nil, "")
 	if !strings.Contains(page.Body.String(), texts.DocsPasswordNotSet) || strings.Contains(page.Body.String(), "api-token") {
 		t.Fatalf("unset password page %s", page.Body.String())
@@ -67,18 +67,10 @@ func TestDocsStaysClosedWithoutConfiguredPassword(t *testing.T) {
 	}
 }
 
-func TestDocsPageWorksInLiveMode(t *testing.T) {
-	handler := NewHandler(config.Config{Mode: config.ModeLive, DocsPassword: "secret"})
-	page := doRaw(t, handler, http.MethodGet, "/docs", "", nil, "")
-	if page.Code != http.StatusOK || strings.Contains(page.Body.String(), texts.ErrorLiveNotReady) {
-		t.Fatalf("live docs %d %s", page.Code, page.Body.String())
-	}
-	api := doJSON(t, handler, http.MethodPost, "/auth/login", "", map[string]string{
-		"login":    "admin",
-		"password": "admin",
-	})
-	if api.Code != http.StatusNotImplemented {
-		t.Fatalf("live api %d", api.Code)
+func TestDocsPageNeedsDatabaseInLiveMode(t *testing.T) {
+	_, err := NewHandler(config.Config{Mode: config.ModeLive, DocsPassword: "secret"})
+	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("live docs startup %v", err)
 	}
 }
 
@@ -88,7 +80,7 @@ func TestDocsLoginIsNotWrittenToDebugLog(t *testing.T) {
 	setLogWriter(&logs)
 	defer setLogWriter(original)
 
-	handler := NewHandler(config.Config{Mode: config.ModeStub, Debug: true, DocsPassword: "top-secret-docs"})
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub, Debug: true, DocsPassword: "top-secret-docs"})
 	response := postDocsPassword(t, handler, "top-secret-docs")
 	if response.Code != http.StatusSeeOther {
 		t.Fatalf("login %d", response.Code)

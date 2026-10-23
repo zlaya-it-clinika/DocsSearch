@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
 	"docssearch/core/internal/config"
+	"docssearch/core/internal/livestore"
+	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
 )
 
@@ -39,20 +42,23 @@ func (writer *statusWriter) Write(payload []byte) (int, error) {
 	return writer.ResponseWriter.Write(payload)
 }
 
-func NewHandler(loadedConfig config.Config) http.Handler {
+func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 	var routeMux *http.ServeMux
 	if strings.EqualFold(loadedConfig.Mode, config.ModeLive) {
-		routeMux = http.NewServeMux()
-		routeMux.HandleFunc("/", serve_LiveNotReady)
+		if strings.TrimSpace(loadedConfig.DatabaseURL) == "" {
+			return nil, errors.New(texts.LiveDatabaseMissing)
+		}
+		embedder := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel)
+		store, err := livestore.Open_LiveStore(loadedConfig.DatabaseURL, loadedConfig.OllamaEmbedDimensions, embedder)
+		if err != nil {
+			return nil, err
+		}
+		routeMux = register_LiveRoutes(store)
 	} else {
 		routeMux = create_StubStore().register_StubRoutes()
 	}
 	register_DocsRoutes(routeMux, create_DocsGate(loadedConfig.DocsPassword))
-	return log_RequestsWhenDebug(loadedConfig.Debug, allow_CrossOrigin(routeMux))
-}
-
-func serve_LiveNotReady(responseWriter http.ResponseWriter, request *http.Request) {
-	write_JSONResponse(responseWriter, http.StatusNotImplemented, errorBody{Error: texts.ErrorLiveNotReady})
+	return log_RequestsWhenDebug(loadedConfig.Debug, allow_CrossOrigin(routeMux)), nil
 }
 
 func allow_CrossOrigin(nextHandler http.Handler) http.Handler {

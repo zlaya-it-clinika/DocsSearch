@@ -15,6 +15,13 @@ const (
 	ErrorLoginTaken         = "login_taken"
 	ErrorInvalidBody        = "invalid_body"
 	ErrorLiveNotReady       = "live_not_ready"
+	ErrorEmbedSize          = "embed_size_mismatch"
+	ErrorEmbedUnavailable   = "embed_unavailable"
+	ErrorStore              = "store_unavailable"
+
+	LiveDatabaseMissing = "Для API_MODE=live нужен DATABASE_URL."
+	LiveDatabaseConnect = "Не удалось подключиться к PostgreSQL."
+	LiveEmbedDimensions = "OLLAMA_EMBED_DIMENSIONS должен быть положительным числом."
 
 	DocsWrongPassword  = "Неверный пароль."
 	DocsPasswordNotSet = "В .env не задан DOCS_PASSWORD."

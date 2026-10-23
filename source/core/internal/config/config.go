@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -11,13 +12,15 @@ const (
 )
 
 type Config struct {
-	Debug            bool
-	Mode             string
-	Port             string
-	DocsPassword     string
-	OllamaURL        string
-	OllamaChatModel  string
-	OllamaEmbedModel string
+	Debug                 bool
+	Mode                  string
+	Port                  string
+	DocsPassword          string
+	DatabaseURL           string
+	OllamaURL             string
+	OllamaChatModel       string
+	OllamaEmbedModel      string
+	OllamaEmbedDimensions int
 }
 
 func Load() Config {
@@ -31,14 +34,28 @@ func Load() Config {
 		port = "8080"
 	}
 	return Config{
-		Debug:            os.Getenv("DEBUG") == "true",
-		Mode:             mode,
-		Port:             port,
-		DocsPassword:     os.Getenv("DOCS_PASSWORD"),
-		OllamaURL:        os.Getenv("OLLAMA_URL"),
-		OllamaChatModel:  os.Getenv("OLLAMA_CHAT_MODEL"),
-		OllamaEmbedModel: os.Getenv("OLLAMA_EMBED_MODEL"),
+		Debug:                 os.Getenv("DEBUG") == "true",
+		Mode:                  mode,
+		Port:                  port,
+		DocsPassword:          os.Getenv("DOCS_PASSWORD"),
+		DatabaseURL:           os.Getenv("DATABASE_URL"),
+		OllamaURL:             os.Getenv("OLLAMA_URL"),
+		OllamaChatModel:       os.Getenv("OLLAMA_CHAT_MODEL"),
+		OllamaEmbedModel:      os.Getenv("OLLAMA_EMBED_MODEL"),
+		OllamaEmbedDimensions: read_EmbedDimensions(),
 	}
+}
+
+func read_EmbedDimensions() int {
+	raw := strings.TrimSpace(os.Getenv("OLLAMA_EMBED_DIMENSIONS"))
+	if raw == "" {
+		return 768
+	}
+	parsed, parseError := strconv.Atoi(raw)
+	if parseError != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
 }
 
 func load_DotEnv(path string) {
