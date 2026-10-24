@@ -3,6 +3,8 @@ package chunk
 import (
 	"archive/zip"
 	"bytes"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -109,4 +111,79 @@ func TestJoin_PdfNumberLinesRestoresParagraphs(t *testing.T) {
 	if strings.Join(paragraphs, " ") != "6.7 6.15 2.11 3.3" {
 		t.Fatalf("paragraphs %v", paragraphs)
 	}
+}
+
+func TestExtract_DocumentChunksSplitsDataTableByRows(t *testing.T) {
+	cell := func(text string, span int) string {
+		properties := ""
+		if span > 1 {
+			properties = `<w:tcPr><w:gridSpan w:val="` + strconv.Itoa(span) + `"/></w:tcPr>`
+		}
+		paragraphs := ""
+		for _, part := range strings.Split(text, "|") {
+			paragraphs += `<w:p><w:r><w:t>` + part + `</w:t></w:r></w:p>`
+		}
+		return `<w:tc>` + properties + paragraphs + `</w:tc>`
+	}
+	row := func(cells ...string) string {
+		return `<w:tr>` + strings.Join(cells, "") + `</w:tr>`
+	}
+	var data strings.Builder
+	data.WriteString(row(cell("Вид документа", 1), cell("Юристы", 1), cell("Прочие", 2)))
+	data.WriteString(row(cell("ВНЕШНИЕ ДОКУМЕНТЫ", 4)))
+	for number := 1; number <= 5; number++ {
+		other := "Нет"
+		if number == 2 {
+			other = "Департамент ИБ|Департамент ИТ"
+		}
+		data.WriteString(row(cell(strconv.Itoa(number)+". Письма", 1), cell("Да", 1), cell(other, 2)))
+	}
+	// Маленькая таблица подписи остается текстом, как в Extract_DocumentText
+	signature := row(cell("Председатель", 1), cell("И. О. Фамилия", 1))
+	body := build_DocxXML(t, `<w:p><w:r><w:t>Правила</w:t></w:r></w:p><w:tbl>`+data.String()+`</w:tbl><w:tbl>`+signature+`</w:tbl><w:p><w:r><w:t>Примечание</w:t></w:r></w:p>`)
+
+	chunks, err := Extract_DocumentChunks("matrix.docx", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 7 || chunks[0].Content != "Правила" {
+		t.Fatalf("chunks %+v", chunks)
+	}
+	second := chunks[2]
+	if second.Section != "ВНЕШНИЕ ДОКУМЕНТЫ" || second.Paragraph != "2" ||
+		second.Content != "ВНЕШНИЕ ДОКУМЕНТЫ\nВид документа: 2. Письма\nЮристы: Да\nПрочие: Департамент ИБ; Департамент ИТ" {
+		t.Fatalf("row %+v", second)
+	}
+	if last := chunks[6]; last.Content != "Председатель\nИ. О. Фамилия\nПримечание" {
+		t.Fatalf("tail %q", last.Content)
+	}
+
+	// Без таблицы данных фрагменты те же, что у Split_DocumentText
+	plainBody := build_DocxXML(t, `<w:p><w:r><w:t>Пункт 1.1 Текст</w:t></w:r></w:p><w:tbl>`+signature+`</w:tbl>`)
+	plain, err := Extract_DocumentText("note.docx", plainBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := Extract_DocumentChunks("note.docx", plainBody)
+	if err != nil || !reflect.DeepEqual(same, Split_DocumentText(plain)) {
+		t.Fatalf("plain docx %+v %v", same, err)
+	}
+}
+
+func build_DocxXML(t *testing.T, bodyXML string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	file, err := archive.Create("word/document.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` + bodyXML + `</w:body></w:document>`
+	if _, err := file.Write([]byte(document)); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }

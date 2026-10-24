@@ -14,7 +14,9 @@ var questionsRaw []byte
 type Question struct {
 	Question  string `json:"question"`
 	Paragraph string `json:"paragraph,omitempty"`
-	Fallback  bool   `json:"fallback,omitempty"`
+	// Часть названия документа цитаты: пункт засчитывается, только если он из этого документа
+	Document string `json:"document,omitempty"`
+	Fallback bool   `json:"fallback,omitempty"`
 	// Факты, без которых ответ неверен. Варианты одного факта через «|»: "3 |трех|три"
 	Facts []string `json:"facts,omitempty"`
 }
@@ -32,6 +34,14 @@ func Paragraph_Matches(paragraph, expected string) bool {
 		return false
 	}
 	return paragraph == expected || strings.HasPrefix(paragraph, expected+".")
+}
+
+// Цитата из нужного пункта и, если задан, из нужного документа
+func Citation_Matches(question Question, document, paragraph string) bool {
+	if !Paragraph_Matches(paragraph, question.Paragraph) {
+		return false
+	}
+	return question.Document == "" || strings.Contains(fold_Text(document), fold_Text(question.Document))
 }
 
 // Каждый факт есть в ответе хотя бы одним из вариантов. Регистр и «ё» не важны.

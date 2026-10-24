@@ -30,3 +30,13 @@ func TestFacts_Match(t *testing.T) {
 		t.Fatal("missing fact matched")
 	}
 }
+
+func TestCitation_MatchesDocument(t *testing.T) {
+	matrix := Question{Paragraph: "1", Document: "Матрица"}
+	if !Citation_Matches(matrix, "Матрица обязательного визирования", "1") || Citation_Matches(matrix, "Инструкция по ДОУ", "1.1") || Citation_Matches(matrix, "Матрица обязательного визирования", "2") {
+		t.Fatal("document match")
+	}
+	if !Citation_Matches(Question{Paragraph: "5.1"}, "Инструкция по ДОУ", "5.1.2") {
+		t.Fatal("any document")
+	}
+}

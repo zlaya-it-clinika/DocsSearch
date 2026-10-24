@@ -38,14 +38,14 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 	if _, err := store.Find_AccountByToken(ctx, token); err != nil {
 		return UploadResult{}, err
 	}
-	plain, err := chunk.Extract_DocumentText(input.FileName, input.Body)
+	// Таблица данных .docx (например, Матрица визирования) режется по строкам с подписями столбцов
+	pieces, err := chunk.Extract_DocumentChunks(input.FileName, input.Body)
 	if errors.Is(err, chunk.ErrUnsupportedFile) {
 		return UploadResult{}, ErrUnsupportedFile
 	}
 	if err != nil {
 		return UploadResult{}, ErrUnsupportedFile
 	}
-	pieces := chunk.Split_DocumentText(plain)
 	contents := make([]string, 0, len(pieces))
 	for _, piece := range pieces {
 		contents = append(contents, chunk_EmbedText(input.Title, piece.Section, piece.Paragraph, piece.Appendix, piece.Content))

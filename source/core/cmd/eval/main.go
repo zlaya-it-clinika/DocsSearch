@@ -122,7 +122,7 @@ func (totals *evalTotals) add_Reply(question eval.Question, reply assistantLine)
 		marks += texts.EvalMarkMissed
 	}
 	if question.Paragraph != "" {
-		if reply_HasParagraph(reply, question.Paragraph) {
+		if reply_HasParagraph(reply, question) {
 			totals.pointHits++
 		} else {
 			marks += texts.EvalMarkPoint
@@ -170,9 +170,9 @@ func (totals evalTotals) print_Summary() {
 	fmt.Printf(texts.EvalHonestLine, totals.honest, totals.answered, percent)
 }
 
-func reply_HasParagraph(reply assistantLine, expected string) bool {
+func reply_HasParagraph(reply assistantLine, question eval.Question) bool {
 	for _, citation := range reply.Citations {
-		if eval.Paragraph_Matches(citation.Paragraph, expected) {
+		if eval.Citation_Matches(question, citation.Document, citation.Paragraph) {
 			return true
 		}
 	}
