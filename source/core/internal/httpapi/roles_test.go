@@ -58,11 +58,32 @@ func TestStubRolesFlagsAndDocumentVisibility(t *testing.T) {
 	if created.RoleID != "role-1" || created.System {
 		t.Fatalf("created role %+v", created)
 	}
-	assign := doJSON(t, handler, http.MethodPatch, "/users/"+createdAdmin.UserID, chiefToken, map[string]any{
+	if doJSON(t, handler, http.MethodPatch, "/users/"+createdAdmin.UserID, chiefToken, map[string]any{
 		"roleIds": []string{texts.RoleIDAdmin, created.RoleID},
+	}).Code != http.StatusBadRequest {
+		t.Fatal("two roles assigned")
+	}
+	assign := doJSON(t, handler, http.MethodPatch, "/users/"+createdAdmin.UserID, chiefToken, map[string]any{
+		"roleId": created.RoleID,
 	})
 	if assign.Code != http.StatusOK {
 		t.Fatalf("assign %d %s", assign.Code, assign.Body.String())
+	}
+	assigned := decodeJSON[accountResponse](t, assign)
+	if len(assigned.RoleIDs) != 1 || assigned.RoleIDs[0] != created.RoleID {
+		t.Fatalf("assigned roles %+v", assigned.RoleIDs)
+	}
+	for _, login := range []string{"не почта", "ivanov@corp", "ivanov@", "@corp.local"} {
+		badCreate := doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+			"login": login, "password": "secret-pass", "displayName": "Иванов",
+		})
+		if badCreate.Code != http.StatusBadRequest || !strings.Contains(badCreate.Body.String(), texts.ErrorInvalidEmail) {
+			t.Fatalf("create with %q: %d %s", login, badCreate.Code, badCreate.Body.String())
+		}
+	}
+	badPatch := doJSON(t, handler, http.MethodPatch, "/users/"+createdAdmin.UserID, chiefToken, map[string]any{"login": "просто текст"})
+	if badPatch.Code != http.StatusBadRequest || !strings.Contains(badPatch.Body.String(), texts.ErrorInvalidEmail) {
+		t.Fatalf("patch login %d %s", badPatch.Code, badPatch.Body.String())
 	}
 	if doJSON(t, handler, http.MethodDelete, "/roles/"+created.RoleID, chiefToken, nil).Code != http.StatusConflict {
 		t.Fatal("role with users was deleted")

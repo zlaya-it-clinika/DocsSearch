@@ -114,7 +114,7 @@ const (
 	DocsHintDraftFile       = "Заполненный .docx бланка. Скачивает только владелец. id берется из template.draftLink."
 	DocsHintUsers           = "Список учетных записей. Нужен флаг users.manage."
 	DocsHintCreateUser      = "Создание учетной записи. Нужен флаг users.manage. role: pending, user или admin."
-	DocsHintPatchUser       = "Имя, почта, пароль, role или roleIds. Нужен флаг users.manage. Свою роль сменить нельзя. Последнего главного администратора снять нельзя."
+	DocsHintPatchUser       = "Имя, почта, пароль, role или одна роль из конструктора: roleId (или roleIds из одного элемента). Нужен флаг users.manage. Свою роль сменить нельзя. Последнего главного администратора снять нельзя."
 	DocsHintAudit           = "Журнал вопросов. Нужен флаг audit.view."
 	DocsHintPermissions     = "Каталог флагов: permission, title, description. Любой вошедший."
 	DocsHintRoles           = "Список ролей. Нужен флаг roles.manage."

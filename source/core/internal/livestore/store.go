@@ -149,7 +149,7 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 
 func read_MigrationSQL() (string, error) {
 	var builder strings.Builder
-	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql"} {
+	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql"} {
 		raw, err := read_MigrationFile(name)
 		if err != nil {
 			return "", err

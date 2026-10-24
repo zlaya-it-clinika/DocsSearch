@@ -3,6 +3,7 @@
 import { fetch_AuthConfig, login_LdapUser, login_User, signup_User } from '../api.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Element, create_Icon, create_Logo } from '../lib/dom.js';
+import { check_IsEmail } from '../lib/validate.js';
 import { read_Preference, write_Preference } from '../preferences.js';
 import { AppTexts, AuthTexts, format_Text, get_ErrorText } from '../texts.js';
 
@@ -15,8 +16,6 @@ export const AuthModes = Object.freeze({
 // Последний способ входа запоминается в браузере: сотрудник с доменной учётной записью
 // не должен каждый раз нажимать «Продолжить через LDAP»
 const preferredModeName = 'auth.mode';
-
-const simpleEmailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function create_Field(id, label, input) {
 	const field = create_Element('div', { className: 'field' }, [
@@ -188,7 +187,7 @@ export function create_LoginView({ onSuccess, compact = false }) {
 				return null;
 			}
 			const email = emailField.input.value.trim();
-			if (!simpleEmailPattern.test(email)) {
+			if (!check_IsEmail(email)) {
 				show_Error(AuthTexts.invalidEmail);
 				emailField.input.focus();
 				return null;

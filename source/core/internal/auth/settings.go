@@ -88,10 +88,24 @@ func Normalize_Email(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
 
-// Простой адрес вида name@domain, без имени в угловых скобках
+// Простой адрес вида name@domain.zone, без имени в угловых скобках.
+// После @ нужен домен с точкой, части домена непустые
 func Check_IsEmail(value string) bool {
 	parsed, err := mail.ParseAddress(value)
-	return err == nil && parsed.Address == value && parsed.Name == ""
+	if err != nil || parsed.Address != value || parsed.Name != "" {
+		return false
+	}
+	domain := value[strings.LastIndex(value, "@")+1:]
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if label == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // bcrypt учитывает только первые 72 байта пароля, длиннее не принимаем, как open-webui

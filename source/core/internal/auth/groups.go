@@ -43,33 +43,29 @@ func Group_Names(values []string) []string {
 	return names
 }
 
-// Совпавшие роли заменяют набор. Главный администратор остается, даже если его группы нет в списке.
-// Пустой список совпадений возвращает роль по умолчанию.
+// У пользователя одна роль. Главный администратор ей и остаётся, даже если его группы нет в списке.
+// Иначе берётся первая роль, чья группа совпала. Без совпадений - роль по умолчанию
 func RoleIDs_ForGroups(groups []string, mapped []GroupRole, current []string, defaultRoleID string) []string {
+	if contains_RoleID(current, texts.RoleIDChief) {
+		return []string{texts.RoleIDChief}
+	}
 	known := map[string]struct{}{}
 	for _, group := range Group_Names(groups) {
 		known[strings.ToLower(group)] = struct{}{}
 	}
-	next := []string{}
 	for _, role := range mapped {
 		name := strings.ToLower(strings.TrimSpace(role.Group))
 		if name == "" {
 			continue
 		}
-		if _, found := known[name]; !found {
-			continue
-		}
-		if !contains_RoleID(next, role.RoleID) {
-			next = append(next, role.RoleID)
+		if _, found := known[name]; found {
+			return []string{role.RoleID}
 		}
 	}
-	if len(next) == 0 && defaultRoleID != "" {
-		next = append(next, defaultRoleID)
+	if defaultRoleID == "" {
+		return []string{}
 	}
-	if contains_RoleID(current, texts.RoleIDChief) && !contains_RoleID(next, texts.RoleIDChief) {
-		next = append(next, texts.RoleIDChief)
-	}
-	return next
+	return []string{defaultRoleID}
 }
 
 func contains_RoleID(ids []string, wanted string) bool {

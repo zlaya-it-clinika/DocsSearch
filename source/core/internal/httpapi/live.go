@@ -949,9 +949,9 @@ func (api *liveAPI) serve_ListUsers(responseWriter http.ResponseWriter, request 
 }
 
 func (api *liveAPI) serve_CreateUser(responseWriter http.ResponseWriter, request *http.Request) {
-	created, ok := read_CreateUserRequest(responseWriter, request)
-	if !ok {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+	created, errorCode := read_CreateUserRequest(responseWriter, request)
+	if errorCode != "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, errorCode)
 		return
 	}
 	token, found := read_BearerToken(request)
@@ -968,9 +968,9 @@ func (api *liveAPI) serve_CreateUser(responseWriter http.ResponseWriter, request
 }
 
 func (api *liveAPI) serve_PatchUser(responseWriter http.ResponseWriter, request *http.Request) {
-	patch, ok := read_PatchUserRequest(responseWriter, request)
-	if !ok {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+	patch, errorCode := read_PatchUserRequest(responseWriter, request)
+	if errorCode != "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, errorCode)
 		return
 	}
 	token, found := read_BearerToken(request)

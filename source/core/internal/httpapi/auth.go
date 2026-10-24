@@ -111,6 +111,7 @@ type patchUserRequest struct {
 	Password    *string  `json:"password"`
 	AccessLevel *int     `json:"accessLevel"`
 	Role        *string  `json:"role"`
+	RoleID      *string  `json:"roleId"`
 	RoleIDs     []string `json:"roleIds"`
 }
 
@@ -274,11 +275,12 @@ func normalize_AccountLogin(raw string) string {
 	return trimmed
 }
 
-// Роль важнее уровня: role задаёт и уровень, и признак ожидания. Без роли - уровень из запроса
-func read_CreateUserRequest(responseWriter http.ResponseWriter, request *http.Request) (newAccount, bool) {
+// Роль важнее уровня: role задаёт и уровень, и признак ожидания. Без роли - уровень из запроса.
+// Второй результат - код ошибки для ответа 400, пусто - запрос корректный
+func read_CreateUserRequest(responseWriter http.ResponseWriter, request *http.Request) (newAccount, string) {
 	var body createUserRequest
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
-		return newAccount{}, false
+		return newAccount{}, texts.ErrorInvalidBody
 	}
 	login := body.Login
 	if strings.TrimSpace(login) == "" {
@@ -291,36 +293,59 @@ func read_CreateUserRequest(responseWriter http.ResponseWriter, request *http.Re
 		accessLevel: texts.SeedDocumentAccessOpen,
 	}
 	if created.login == "" || created.displayName == "" || !auth.Check_PasswordFits(created.password) {
-		return newAccount{}, false
+		return newAccount{}, texts.ErrorInvalidBody
+	}
+	// Новая учётная запись входит по почте
+	if !auth.Check_IsEmail(created.login) {
+		return newAccount{}, texts.ErrorInvalidEmail
 	}
 	if body.AccessLevel != nil {
 		created.accessLevel = *body.AccessLevel
 	}
 	if role := auth.Normalize_Role(body.Role); role != "" {
 		if !auth.Check_IsKnownRole(role) {
-			return newAccount{}, false
+			return newAccount{}, texts.ErrorInvalidBody
 		}
 		created.accessLevel, created.pending = auth.Access_ForRole(role)
 	}
-	return created, true
+	return created, ""
 }
 
-func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Request) (livestore.AccountPatch, bool) {
+// У пользователя ровно одна роль: roleId или roleIds из одного элемента
+func read_SingleRoleID(body patchUserRequest) (*[]string, bool) {
+	if body.RoleID == nil && body.RoleIDs == nil {
+		return nil, true
+	}
+	roleIDs := auth.Unique_IDs(body.RoleIDs)
+	if body.RoleID != nil {
+		roleIDs = auth.Unique_IDs(append(roleIDs, strings.TrimSpace(*body.RoleID)))
+	}
+	if len(roleIDs) != 1 || roleIDs[0] == "" {
+		return nil, false
+	}
+	return &roleIDs, true
+}
+
+// Второй результат - код ошибки для ответа 400, пусто - запрос корректный
+func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Request) (livestore.AccountPatch, string) {
 	var body patchUserRequest
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
-		return livestore.AccountPatch{}, false
+		return livestore.AccountPatch{}, texts.ErrorInvalidBody
 	}
 	patch := livestore.AccountPatch{}
-	if body.RoleIDs == nil {
+	roleIDs, roleOK := read_SingleRoleID(body)
+	if !roleOK {
+		return livestore.AccountPatch{}, texts.ErrorInvalidBody
+	}
+	if roleIDs == nil {
 		patch.AccessLevel = body.AccessLevel
 	} else {
-		roleIDs := auth.Unique_IDs(body.RoleIDs)
-		patch.RoleIDs = &roleIDs
+		patch.RoleIDs = roleIDs
 	}
 	if body.DisplayName != nil {
 		displayName := strings.TrimSpace(*body.DisplayName)
 		if displayName == "" {
-			return livestore.AccountPatch{}, false
+			return livestore.AccountPatch{}, texts.ErrorInvalidBody
 		}
 		patch.DisplayName = &displayName
 	}
@@ -331,20 +356,23 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 	if loginSource != nil {
 		login := normalize_AccountLogin(*loginSource)
 		if login == "" {
-			return livestore.AccountPatch{}, false
+			return livestore.AccountPatch{}, texts.ErrorInvalidBody
+		}
+		if !auth.Check_IsEmail(login) {
+			return livestore.AccountPatch{}, texts.ErrorInvalidEmail
 		}
 		patch.Login = &login
 	}
 	if body.Password != nil {
 		if !auth.Check_PasswordFits(*body.Password) {
-			return livestore.AccountPatch{}, false
+			return livestore.AccountPatch{}, texts.ErrorInvalidBody
 		}
 		patch.Password = body.Password
 	}
-	if body.Role != nil && body.RoleIDs == nil {
+	if body.Role != nil && roleIDs == nil {
 		role := auth.Normalize_Role(*body.Role)
 		if !auth.Check_IsKnownRole(role) {
-			return livestore.AccountPatch{}, false
+			return livestore.AccountPatch{}, texts.ErrorInvalidBody
 		}
 		accessLevel, pending := auth.Access_ForRole(role)
 		if patch.AccessLevel == nil {
@@ -353,7 +381,7 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 		patch.Pending = &pending
 	}
 	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil && patch.RoleIDs == nil {
-		return livestore.AccountPatch{}, false
+		return livestore.AccountPatch{}, texts.ErrorInvalidBody
 	}
-	return patch, true
+	return patch, ""
 }

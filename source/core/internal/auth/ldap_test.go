@@ -72,7 +72,8 @@ func TestCiphersAndEmails(t *testing.T) {
 	if Check_CiphersKnown("RC4-SHA-NOPE") {
 		t.Fatal("unknown cipher accepted")
 	}
-	if !Check_IsEmail("ivanov@corp.local") || Check_IsEmail("ivanov") || Check_IsEmail("Иван <ivanov@corp.local>") {
+	if !Check_IsEmail("ivanov@corp.local") || Check_IsEmail("ivanov") || Check_IsEmail("Иван <ivanov@corp.local>") ||
+		Check_IsEmail("ivanov@corp") || Check_IsEmail("ivanov@") || Check_IsEmail("@corp.local") || Check_IsEmail("ivanov@corp.") {
 		t.Fatal("email check")
 	}
 	if Check_PasswordFits("") || Check_PasswordFits(string(make([]byte, MaxPasswordBytes+1))) || !Check_PasswordFits("x") {

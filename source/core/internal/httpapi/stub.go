@@ -1086,9 +1086,9 @@ func (stubStore *stub) serve_ListUsers(responseWriter http.ResponseWriter, reque
 }
 
 func (stubStore *stub) serve_CreateUser(responseWriter http.ResponseWriter, request *http.Request) {
-	created, ok := read_CreateUserRequest(responseWriter, request)
-	if !ok {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+	created, errorCode := read_CreateUserRequest(responseWriter, request)
+	if errorCode != "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, errorCode)
 		return
 	}
 	stubStore.mu.Lock()
@@ -1105,9 +1105,9 @@ func (stubStore *stub) serve_CreateUser(responseWriter http.ResponseWriter, requ
 }
 
 func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, request *http.Request) {
-	patch, ok := read_PatchUserRequest(responseWriter, request)
-	if !ok {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+	patch, errorCode := read_PatchUserRequest(responseWriter, request)
+	if errorCode != "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, errorCode)
 		return
 	}
 	stubStore.mu.Lock()

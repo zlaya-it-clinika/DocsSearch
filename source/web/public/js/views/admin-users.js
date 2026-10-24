@@ -4,8 +4,9 @@ import { open_Modal } from '../components/modal.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Button, create_Element, create_EmptyBlock, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
 import { format_DateTime, get_Initials } from '../lib/format.js';
+import { check_IsEmail } from '../lib/validate.js';
 import { Roles, get_NextRole, get_RoleLabel, get_UserRole, roleChoices } from '../roles.js';
-import { AdminTexts, AppTexts, format_Text, get_ErrorText } from '../texts.js';
+import { AdminTexts, AppTexts, AuthTexts, format_Text, get_ErrorText } from '../texts.js';
 
 function create_RoleSelect(selectedRole, id) {
 	return create_Element('select', { className: 'select', attrs: { id } }, roleChoices.map((role) => create_Element('option', {
@@ -29,12 +30,26 @@ function create_Field(id, label, control, hint = '') {
 	]);
 }
 
-// Общая форма для создания и правки. При правке пароль меняется, только если поле заполнено.
-// Свою роль администратор не меняет: ядро такой запрос отклонит
-function selected_RoleIds(boxes) {
-	return boxes.filter((input) => input.checked).map((input) => input.value);
+// Роль пользователя из конструктора ролей: у каждого ровно одна
+function get_AccountRoleId(account) {
+	return Array.isArray(account?.roleIds) && account.roleIds.length > 0 ? account.roleIds[0] : '';
 }
 
+// Роль новой учётной записи до выбора администратора
+const DefaultRoleId = 'role-user';
+
+// Выпадающий список ролей. Новому пользователю по умолчанию - «Сотрудник», если такая роль есть
+function create_RoleIdSelect(roles, selectedRoleId, id) {
+	const fallback = roles.find((role) => role.roleId === DefaultRoleId) ?? roles[0];
+	const chosen = roles.some((role) => role.roleId === selectedRoleId) ? selectedRoleId : fallback?.roleId;
+	return create_Element('select', { className: 'select', attrs: { id } }, roles.map((role) => create_Element('option', {
+		text: role.title,
+		attrs: { value: role.roleId, selected: role.roleId === chosen, title: role.description || role.title },
+	})));
+}
+
+// Общая форма для создания и правки. При правке пароль меняется, только если поле заполнено.
+// Свою роль администратор не меняет: ядро такой запрос отклонит
 function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) {
 	const isEdit = Boolean(account);
 	const isSelf = isEdit && account.userId === currentUserId;
@@ -47,16 +62,17 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 	const initialRole = isEdit ? get_UserRole(account, config) : Roles.user;
 	const roleSelect = create_RoleSelect(initialRole, 'user-role');
 	roleSelect.disabled = isSelf;
-	const assigned = new Set(account?.roleIds ?? []);
-	const roleBoxes = roles.map((role) => {
-		const input = create_Element('input', { attrs: { type: 'checkbox', value: role.roleId, disabled: isSelf } });
-		input.checked = assigned.size > 0 ? assigned.has(role.roleId) : role.roleId === 'role-user';
-		return input;
-	});
-	const roleChecks = create_Element('div', { className: 'check-list' }, roles.map((role, index) => create_Element('label', { className: 'check-row' }, [
-		roleBoxes[index],
-		create_Element('span', { text: role.title }),
-	])));
+	const initialRoleId = get_AccountRoleId(account);
+	const roleIdSelect = create_RoleIdSelect(roles, initialRoleId, 'user-role-id');
+	roleIdSelect.disabled = isSelf;
+	const roleHint = create_Element('span', { className: 'field-hint' });
+	// Под списком - описание выбранной роли, чтобы было понятно, какие права она даёт
+	const show_RoleHint = () => {
+		const role = roles.find((item) => item.roleId === roleIdSelect.value);
+		roleHint.textContent = isSelf ? AdminTexts.usersSelfRoleHint : (role?.description || AdminTexts.usersFieldRoleIdHint);
+	};
+	roleIdSelect.addEventListener('change', show_RoleHint);
+	show_RoleHint();
 	if (isEdit) {
 		nameInput.value = account.displayName;
 		loginInput.value = account.login;
@@ -69,7 +85,11 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 			? create_Field('user-password', AdminTexts.usersFieldNewPassword, passwordInput, AdminTexts.usersFieldNewPasswordHint)
 			: create_Field('user-password', AdminTexts.usersFieldPassword, passwordInput),
 		roles.length > 0
-			? create_Field('user-roles', AdminTexts.usersFieldRoles, roleChecks, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRolesHint)
+			? create_Element('div', { className: 'field' }, [
+				create_Element('label', { className: 'field-label', text: AdminTexts.usersFieldRole, attrs: { for: 'user-role-id' } }),
+				roleIdSelect,
+				roleHint,
+			])
 			: create_Field('user-role', AdminTexts.usersFieldRole, roleSelect, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRoleHint),
 		create_Element('div', { className: 'field-wide' }, [errorBox]),
 	]);
@@ -99,10 +119,8 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 			changes.password = passwordInput.value;
 		}
 		if (!isSelf && roles.length > 0) {
-			const nextIds = selected_RoleIds(roleBoxes);
-			const same = nextIds.length === assigned.size && nextIds.every((roleId) => assigned.has(roleId));
-			if (!same) {
-				changes.roleIds = nextIds;
+			if (roleIdSelect.value !== initialRoleId) {
+				changes.roleId = roleIdSelect.value;
 			}
 		} else if (!isSelf && roleSelect.value !== initialRole) {
 			changes.role = roleSelect.value;
@@ -118,9 +136,10 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 			emptyField.focus();
 			return;
 		}
-		if (roles.length > 0 && !isSelf && selected_RoleIds(roleBoxes).length === 0) {
-			errorBox.textContent = AdminTexts.usersRolesRequired;
+		if (!check_IsEmail(loginInput.value)) {
+			errorBox.textContent = AuthTexts.invalidEmail;
 			errorBox.hidden = false;
+			loginInput.focus();
 			return;
 		}
 		errorBox.hidden = true;
@@ -139,8 +158,8 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 					displayName: nameInput.value.trim(),
 					role: roles.length > 0 ? Roles.user : roleSelect.value,
 				});
-			if (!isEdit && roles.length > 0) {
-				saved = await update_User(saved.userId, { roleIds: selected_RoleIds(roleBoxes) });
+			if (!isEdit && roles.length > 0 && get_AccountRoleId(saved) !== roleIdSelect.value) {
+				saved = await update_User(saved.userId, { roleId: roleIdSelect.value });
 			}
 			modal.close();
 			show_Toast(isEdit ? AdminTexts.usersUpdated : AdminTexts.usersCreated, 'success');
@@ -199,9 +218,9 @@ export function create_UsersTab({ user, config }) {
 
 	const render_RoleBadge = (account) => {
 		if (roles.length > 0) {
-			const titles = roles.filter((role) => (account.roleIds ?? []).includes(role.roleId)).map((role) => role.title);
-			const label = titles.length > 0 ? titles.join(', ') : get_RoleLabel(get_UserRole(account, config));
-			return create_Element('span', { className: 'badge', text: label });
+			const role = roles.find((item) => item.roleId === get_AccountRoleId(account));
+			const label = role ? role.title : get_RoleLabel(get_UserRole(account, config));
+			return create_Element('span', { className: get_RoleBadgeClass(get_UserRole(account, config)), text: label, attrs: { title: role?.description ?? '' } });
 		}
 		const role = get_UserRole(account, config);
 		const isSelf = account.userId === user.userId;

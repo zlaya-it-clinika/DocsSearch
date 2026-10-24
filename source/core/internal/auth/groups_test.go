@@ -15,16 +15,20 @@ func TestGroup_NamesReadsCommonName(t *testing.T) {
 
 func TestRoleIDs_ForGroupsKeepsChief(t *testing.T) {
 	mapped := []GroupRole{{RoleID: "role-1", Group: "Архив"}}
-	matched := RoleIDs_ForGroups([]string{"CN=Архив,OU=Groups,DC=corp,DC=local"}, mapped, []string{"role-chief"}, "role-user")
-	if len(matched) != 2 || matched[0] != "role-1" || matched[1] != "role-chief" {
+	matched := RoleIDs_ForGroups([]string{"CN=Архив,OU=Groups,DC=corp,DC=local"}, mapped, []string{"role-user"}, "role-user")
+	if len(matched) != 1 || matched[0] != "role-1" {
 		t.Fatalf("matched %v", matched)
+	}
+	chiefMatched := RoleIDs_ForGroups([]string{"CN=Архив,OU=Groups,DC=corp,DC=local"}, mapped, []string{"role-chief"}, "role-user")
+	if len(chiefMatched) != 1 || chiefMatched[0] != "role-chief" {
+		t.Fatalf("chief matched %v", chiefMatched)
 	}
 	fallback := RoleIDs_ForGroups(nil, mapped, []string{"role-user"}, "role-user")
 	if len(fallback) != 1 || fallback[0] != "role-user" {
 		t.Fatalf("fallback %v", fallback)
 	}
 	chiefFallback := RoleIDs_ForGroups(nil, mapped, []string{"role-chief"}, "role-user")
-	if len(chiefFallback) != 2 || chiefFallback[0] != "role-user" || chiefFallback[1] != "role-chief" {
+	if len(chiefFallback) != 1 || chiefFallback[0] != "role-chief" {
 		t.Fatalf("chief fallback %v", chiefFallback)
 	}
 }

@@ -221,7 +221,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	created := doJSON(t, handler, http.MethodPost, "/users", adminToken, map[string]any{
-		"login":       "clerk",
+		"login":       "clerk@corp.local",
 		"password":    "clerk",
 		"displayName": "Делопроизводитель",
 		"accessLevel": 1,
@@ -230,14 +230,14 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 		t.Fatalf("create user %d %s", created.Code, created.Body.String())
 	}
 	duplicate := doJSON(t, handler, http.MethodPost, "/users", adminToken, map[string]any{
-		"login":       "clerk",
+		"login":       "clerk@corp.local",
 		"password":    "other",
 		"displayName": "Другой",
 	})
 	if duplicate.Code != http.StatusConflict {
 		t.Fatalf("duplicate login %d", duplicate.Code)
 	}
-	clerkToken := login(t, handler, "clerk", "clerk")
+	clerkToken := login(t, handler, "clerk@corp.local", "clerk")
 	if clerkToken == "" {
 		t.Fatal("created user cannot login")
 	}
@@ -395,7 +395,7 @@ func TestDocumentScopeListUploadAndDelete(t *testing.T) {
 		t.Fatalf("admin reads personal %d %s", foreignFile.Code, foreignFile.Body.String())
 	}
 	secondEmployee := doJSON(t, handler, http.MethodPost, "/users", adminToken, map[string]any{
-		"login":       "other",
+		"login":       "other@corp.local",
 		"password":    "other",
 		"displayName": "Другой",
 		"accessLevel": 1,
@@ -403,7 +403,7 @@ func TestDocumentScopeListUploadAndDelete(t *testing.T) {
 	if secondEmployee.Code != http.StatusOK {
 		t.Fatalf("second user %d %s", secondEmployee.Code, secondEmployee.Body.String())
 	}
-	otherToken := login(t, handler, "other", "other")
+	otherToken := login(t, handler, "other@corp.local", "other")
 	hiddenFile := doRaw(t, handler, http.MethodGet, "/documents/"+uploaded.DocumentID+"/file", otherToken, nil, "")
 	if hiddenFile.Code != http.StatusNotFound {
 		t.Fatalf("foreign personal file %d", hiddenFile.Code)
