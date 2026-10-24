@@ -7,6 +7,7 @@ import { can_OpenAdmin, check_IsPending } from './roles.js';
 import { define_NotFound, define_Route, navigate_To, start_Router } from './router.js';
 import { appState, update_State } from './state.js';
 import { AdminTexts, AppTexts, AuthTexts, PendingTexts, get_ErrorText } from './texts.js';
+import { create_EasterView } from './views/easter.js';
 import { create_LoginView } from './views/login.js';
 import { create_PendingView } from './views/pending.js';
 import { create_Shell } from './views/shell.js';
@@ -165,6 +166,10 @@ async function boot() {
 	});
 
 	define_Route('/login', show_Login);
+	define_Route('/bobby', () => {
+		shell = null;
+		root.replaceChildren(create_EasterView().element);
+	});
 	define_Route('/', require_User(() => ensure_Shell().show_Chat(null)));
 	define_Route('/documents', require_User(() => ensure_Shell().show_Documents()));
 	define_Route('/c/:sessionId', require_User(({ sessionId }) => ensure_Shell().show_Chat(sessionId)));

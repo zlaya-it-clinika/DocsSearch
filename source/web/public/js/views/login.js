@@ -5,6 +5,7 @@ import { show_Toast } from '../components/toast.js';
 import { create_Element, create_Icon, create_Logo } from '../lib/dom.js';
 import { check_IsEmail } from '../lib/validate.js';
 import { read_Preference, write_Preference } from '../preferences.js';
+import { navigate_To } from '../router.js';
 import { AppTexts, AuthTexts, format_Text, get_ErrorText } from '../texts.js';
 
 export const AuthModes = Object.freeze({
@@ -202,6 +203,14 @@ export function create_LoginView({ onSuccess, compact = false }) {
 
 	form.addEventListener('submit', async (event) => {
 		event.preventDefault();
+		// Хвост классической SQL-инъекции в конце логина не уходит на сервер
+		if (mode !== AuthModes.signup) {
+			const loginValue = mode === AuthModes.ldap ? usernameField.input.value : emailField.input.value;
+			if (loginValue.trim().endsWith("';--")) {
+				navigate_To('/bobby');
+				return;
+			}
+		}
 		errorBox.hidden = true;
 		const idleText = submitButton.textContent;
 		submitButton.disabled = true;

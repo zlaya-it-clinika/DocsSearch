@@ -60,6 +60,13 @@ export const AuthTexts = Object.freeze({
 	welcomeAdmin: 'Учётная запись администратора создана',
 });
 
+export const EasterTexts = Object.freeze({
+	title: '1 строка изменена',
+	lead: 'Маленький Бобби Тейблс уже заходил.',
+	query: "SELECT * FROM users WHERE login = '';--",
+	back: 'Вернуться ко входу',
+});
+
 // Экран ожидания подтверждения, как AccountPending в open-webui
 export const PendingTexts = Object.freeze({
 	title: 'Учётная запись ожидает активации',
