@@ -70,9 +70,13 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	templateSession := createSession(t, handler, employeeToken)
-	unknownTemplate := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
-	if unknownTemplate.Kind != texts.KindFallback || len(unknownTemplate.Citations) != 0 {
-		t.Fatalf("unknown template %+v", unknownTemplate)
+	// Служебной записки нет среди бланков модулей: ее готовит макет по ГОСТ, отмена возвращает к обычному чату
+	noteLayout := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
+	if noteLayout.Kind != texts.KindTemplateField || noteLayout.Template == nil || noteLayout.Template.ID != "service-note" || len(noteLayout.Citations) != 0 {
+		t.Fatalf("note layout %+v", noteLayout)
+	}
+	if cancelled := postMessage(t, handler, employeeToken, templateSession, "отмена"); cancelled.Text != texts.LayoutCancelledText {
+		t.Fatalf("layout cancel %+v", cancelled)
 	}
 	field := postMessage(t, handler, employeeToken, templateSession, "Нужен модуль распоряжения о создании рабочей группы")
 	if field.Kind != texts.KindTemplateField || field.Contacts != nil || field.Template == nil || field.Template.Field != "1" || !strings.Contains(field.Template.Title, "рабочей группы") || field.Template.FileLink != "/blanks/order-work-group/file" {

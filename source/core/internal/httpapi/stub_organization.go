@@ -23,12 +23,15 @@ type stubOrganization struct {
 }
 
 func (stubStore *stub) create_Organization() *stubOrganization {
-	return &stubOrganization{
+	organization := &stubOrganization{
 		stubStore:    stubStore,
 		officials:    map[string]livestore.Official{},
 		images:       map[string]livestore.OrganizationImage{},
 		nextOfficial: 1,
 	}
+	// Чату заглушки реквизиты нужны для макетов документов
+	stubStore.organization = organization
+	return organization
 }
 
 // Вошедший и подтвержденный пользователь, его флаги. Ошибки те же, что у боевого хранилища
@@ -63,20 +66,7 @@ func (organization *stubOrganization) Read_Organization(ctx context.Context, tok
 	}
 	organization.mu.Lock()
 	defer organization.mu.Unlock()
-	officials := make([]livestore.Official, 0, len(organization.officials))
-	for _, official := range organization.officials {
-		officials = append(officials, official)
-	}
-	// Тот же порядок, что в базе: директор первым, дальше по должности и ФИО
-	sort.Slice(officials, func(left, right int) bool {
-		if officials[left].Chief != officials[right].Chief {
-			return officials[left].Chief
-		}
-		if officials[left].Position != officials[right].Position {
-			return officials[left].Position < officials[right].Position
-		}
-		return officials[left].FullName < officials[right].FullName
-	})
+	officials := organization.sorted_Officials()
 	images := []livestore.OrganizationImageInfo{}
 	for _, kind := range []string{imageKindEmblem, imageKindStamp} {
 		if image, found := organization.images[kind]; found {
@@ -94,6 +84,24 @@ func (organization *stubOrganization) Read_Organization(ctx context.Context, tok
 		Images:    images,
 		CanManage: auth.Has_Permission(permissions, texts.PermissionOrganizationManage),
 	}, nil
+}
+
+// Тот же порядок, что в базе: директор первым, дальше по должности и ФИО. Вызывается под organization.mu
+func (organization *stubOrganization) sorted_Officials() []livestore.Official {
+	officials := make([]livestore.Official, 0, len(organization.officials))
+	for _, official := range organization.officials {
+		officials = append(officials, official)
+	}
+	sort.Slice(officials, func(left, right int) bool {
+		if officials[left].Chief != officials[right].Chief {
+			return officials[left].Chief
+		}
+		if officials[left].Position != officials[right].Position {
+			return officials[left].Position < officials[right].Position
+		}
+		return officials[left].FullName < officials[right].FullName
+	})
+	return officials
 }
 
 func (organization *stubOrganization) Create_Official(ctx context.Context, token string, input livestore.OfficialInput) (livestore.Official, error) {

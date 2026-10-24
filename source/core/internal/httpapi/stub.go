@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/draftcheck"
+	"docssearch/core/internal/layout"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/source"
 	"docssearch/core/internal/texts"
@@ -78,6 +80,7 @@ type sessionRecord struct {
 	messages          []any
 	templateStep      int
 	blankFill         blank.FillState
+	layoutFill        layout.State
 	attachmentsByID   map[string]*attachmentRecord
 	draftAttachmentID string
 	// Процесс, выбранный в чате. Пустая строка - все процессы
@@ -307,6 +310,8 @@ type stub struct {
 	// Настройки входа живут в памяти, как и остальные данные заглушки
 	signupSettings auth.SignupSettings
 	ldapSettings   auth.LdapSettings
+	// Реквизиты организации для макетов документов в чате
+	organization *stubOrganization
 }
 
 // withoutUsers: старт без admin/admin и user/user, первая регистрация создаёт администратора
@@ -639,10 +644,23 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	var step blank.Step
 	var turnAttachments []messageAttachment
 	handled := false
-	if auth.Has_Permission(permissions, texts.PermissionTemplatesUse) {
+	layoutHandled := false
+	var layoutStep layout.Step
+	if auth.Has_Permission(permissions, texts.PermissionTemplatesUse) && auth.Has_Permission(permissions, texts.PermissionChatUse) {
+		// В заглушке нет модели: макет собирается из ответов как есть
+		layoutStep, layoutHandled, _ = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
+			return stubStore.organization.layout_Snapshot(), nil
+		}, nil, time.Now())
+	}
+	if !layoutHandled && auth.Has_Permission(permissions, texts.PermissionTemplatesUse) {
 		step, handled = blank.Advance_Blank(session.blankFill, body.Text)
 	}
-	if handled {
+	if layoutHandled {
+		reply = reply_FromLayout(layoutStep)
+		if layoutStep.Ready && len(layoutStep.Docx) > 0 {
+			reply.Template.DraftLink = draft_FileLink(stubStore.save_DraftFile(record.id, layoutStep.FileName, layoutStep.Docx))
+		}
+	} else if handled {
 		if !auth.Has_Permission(permissions, texts.PermissionChatUse) {
 			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 			return
@@ -1598,5 +1616,15 @@ func build_AttachmentHeader(name string) string {
 	if name == "" || name == "." {
 		name = "document"
 	}
-	return `attachment; filename="` + name + `"`
+	// Кириллица в имени - через filename* (RFC 6266), в filename - запасное имя латиницей для старых клиентов
+	fallback := strings.Map(func(symbol rune) rune {
+		if symbol < 0x20 || symbol > 0x7e || symbol == '\\' {
+			return '_'
+		}
+		return symbol
+	}, name)
+	if fallback == name {
+		return `attachment; filename="` + name + `"`
+	}
+	return `attachment; filename="` + fallback + `"; filename*=UTF-8''` + url.PathEscape(name)
 }

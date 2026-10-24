@@ -11,6 +11,7 @@ import (
 
 	"docssearch/core/internal/auth"
 	"docssearch/core/internal/blank"
+	"docssearch/core/internal/layout"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/source"
@@ -452,17 +453,33 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		return
 	}
 	replyPrompt := replyPrompts{Select: prompts.Select, Answer: prompts.Answer, Clarify: prompts.Clarify}.with_Brief(brief)
-	session := &sessionRecord{blankFill: decode_FillState(templateState)}
+	session := &sessionRecord{blankFill: decode_FillState(templateState), layoutFill: decode_LayoutState(templateState)}
 	var reply assistantReply
 	var documents []shownDocument
 	var turnAttachments []messageAttachment
-	step, handled := blank.Advance_Blank(session.blankFill, body.Text)
+	// Макет документа по ГОСТ: продолжение начатого или новая просьба подготовить документ
+	var layoutStep layout.Step
+	layoutHandled := false
+	if account.Has(texts.PermissionTemplatesUse) && account.Has(texts.PermissionChatUse) {
+		var layoutError error
+		layoutStep, layoutHandled, layoutError = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
+			return api.load_LayoutOrganization(request.Context(), token)
+		}, api.chatter, time.Now())
+		if layoutError != nil {
+			write_LiveError(responseWriter, layoutError)
+			return
+		}
+	}
+	step, handled := blank.Step{}, false
+	if !layoutHandled {
+		step, handled = blank.Advance_Blank(session.blankFill, body.Text)
+	}
 	if handled && !account.Has(texts.PermissionTemplatesUse) {
 		handled = false
 	}
 	var source livestore.RevisionSource
 	revising := false
-	if !handled {
+	if !handled && !layoutHandled {
 		var sourceError error
 		source, revising, sourceError = api.store.Find_RevisionSource(request.Context(), request.PathValue("sessionId"), body.AttachmentIDs)
 		if sourceError != nil {
@@ -470,7 +487,18 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			return
 		}
 	}
-	if handled {
+	if layoutHandled {
+		reply = reply_FromLayout(layoutStep)
+		documents = []shownDocument{}
+		if layoutStep.Ready && len(layoutStep.Docx) > 0 {
+			draftID, saveError := api.store.Save_DraftFile(request.Context(), account.UserID, layoutStep.FileName, layoutStep.Docx)
+			if saveError != nil {
+				write_LiveError(responseWriter, saveError)
+				return
+			}
+			reply.Template.DraftLink = draft_FileLink(draftID)
+		}
+	} else if handled {
 		if !account.Has(texts.PermissionChatUse) {
 			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 			return
@@ -583,7 +611,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
-	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, encode_FillState(session.blankFill), userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text, build_SessionTitle(body.Text))
+	err = api.store.Save_SessionExchange(request.Context(), request.PathValue("sessionId"), session.templateStep, encode_SessionState(session), userBody, assistantBody, auditDocuments, account.UserID, account.DisplayName, body.Text, build_SessionTitle(body.Text))
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
