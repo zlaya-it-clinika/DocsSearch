@@ -315,3 +315,50 @@ export function fetch_LdapServer() {
 export function save_LdapServer(fields) {
 	return request_Api('POST', '/auth/admin/config/ldap/server', { json: fields });
 }
+
+// Локальная модель: подключение к Ollama, модели и индекс, как в open-webui
+
+export function fetch_AISettings() {
+	return request_Api('GET', '/ai/settings');
+}
+
+// fields: ollamaUrl, chatModel, embedModel, temperature, topK, topP, numCtx (null - из Modelfile)
+export function save_AISettings(fields) {
+	return request_Api('POST', '/ai/settings', { json: fields });
+}
+
+export function verify_Ollama(ollamaUrl) {
+	return request_Api('POST', '/ai/verify', { json: { ollamaUrl } });
+}
+
+export function list_AIModels() {
+	return request_Api('GET', '/ai/models');
+}
+
+export function start_ModelPull(name) {
+	return request_Api('POST', '/ai/models/pull', { json: { name } });
+}
+
+export function fetch_ModelPull() {
+	return request_Api('GET', '/ai/models/pull');
+}
+
+export function cancel_ModelPull() {
+	return request_Api('POST', '/ai/models/pull/cancel', { json: {} });
+}
+
+export function delete_AIModel(name) {
+	return request_Api('POST', '/ai/models/delete', { json: { name } });
+}
+
+export function test_AIModel(name) {
+	return request_Api('POST', '/ai/models/test', { json: { name } });
+}
+
+export function start_Reindex() {
+	return request_Api('POST', '/ai/reindex', { json: {} });
+}
+
+export function fetch_Reindex() {
+	return request_Api('GET', '/ai/reindex');
+}

@@ -7,7 +7,7 @@ import { ErrorCodes } from './texts.js';
 
 // Разделы ядра, которые можно вызывать из браузера. Вход ядра (/auth/login) и страница /docs
 // сюда не входят: токен ядра не должен попасть в браузер.
-const proxiedCoreSections = new Set(['me', 'sessions', 'documents', 'users', 'audit', 'drafts', 'templates', 'blanks', 'processes', 'roles', 'permissions']);
+const proxiedCoreSections = new Set(['me', 'sessions', 'documents', 'users', 'audit', 'drafts', 'templates', 'blanks', 'processes', 'roles', 'permissions', 'ai']);
 
 // Настройки входа администратора (/auth/admin/...) идут в ядро с токеном сессии
 const adminAuthPrefix = '/auth/admin/';

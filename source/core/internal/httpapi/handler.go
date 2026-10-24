@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"docssearch/core/internal/config"
 	"docssearch/core/internal/livestore"
@@ -54,11 +56,15 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 		if err != nil {
 			return nil, err
 		}
+		apply_SavedAISettings(store, embedder)
 		routeMux = register_LiveRoutes(store, embedder)
+		register_AIRoutes(routeMux, create_LiveAIAdmin(store, embedder))
 		routeHandler = routeMux
 	} else {
 		stubStore := create_StubStore(loadedConfig.StubWithoutUsers, loadedConfig.AuthDefaults)
 		routeMux = stubStore.register_StubRoutes()
+		client := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel, loadedConfig.OllamaChatModel)
+		register_AIRoutes(routeMux, stubStore.create_AIAdmin(client, loadedConfig.OllamaEmbedDimensions))
 		// В боевом режиме ожидающих отсекает хранилище, в заглушке - эта обёртка
 		routeHandler = stubStore.reject_PendingUsers(routeMux)
 	}
@@ -103,4 +109,30 @@ func write_ErrorResponse(responseWriter http.ResponseWriter, status int, code st
 func read_JSONBody(responseWriter http.ResponseWriter, request *http.Request, decodeTarget any) error {
 	request.Body = http.MaxBytesReader(responseWriter, request.Body, maxJSONBytes)
 	return json.NewDecoder(request.Body).Decode(decodeTarget)
+}
+
+// Настройки из админ-панели важнее .env. Пока их не сохраняли, клиент работает со значениями из .env
+func apply_SavedAISettings(store *livestore.LiveStore, client *ollama.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	saved, found, err := store.Read_SavedAISettings(ctx)
+	if err != nil {
+		log.Printf("ai settings: %v", err)
+		return
+	}
+	if found {
+		client.Apply_Settings(saved)
+	}
+}
+
+func create_LiveAIAdmin(store *livestore.LiveStore, client *ollama.Client) *aiAdmin {
+	return &aiAdmin{
+		backend:    client,
+		dimensions: store.Dimensions(),
+		authorize: func(ctx context.Context, token string) error {
+			return store.Require_Permission(ctx, token, texts.PermissionAIManage)
+		},
+		persist:   store.Save_AISettings,
+		reindexer: store,
+	}
 }

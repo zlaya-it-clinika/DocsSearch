@@ -1,7 +1,8 @@
-// Админ-панель: вкладки как в open-webui. Пользователи, база знаний, журнал, настройки входа.
+// Админ-панель: вкладки как в open-webui. Пользователи, база знаний, журнал, модели ИИ, настройки входа.
 import { create_Element, create_Icon } from '../lib/dom.js';
 import { Permissions, has_Permission } from '../roles.js';
 import { AdminTexts } from '../texts.js';
+import { create_AITab } from './admin-ai.js';
 import { create_AuditTab } from './admin-audit.js';
 import { create_KnowledgeTab } from './admin-knowledge.js';
 import { create_RolesTab } from './admin-roles.js';
@@ -20,6 +21,7 @@ const adminTabs = [
 		visible: (user, config) => has_Permission(user, config, Permissions.globalManage) || has_Permission(user, config, Permissions.personalViewAll),
 	},
 	{ id: 'audit', icon: 'list', label: AdminTexts.tabAudit, permission: Permissions.auditView, create: create_AuditTab },
+	{ id: 'ai', icon: 'cpu', label: AdminTexts.tabAI, permission: Permissions.aiManage, create: create_AITab },
 	{ id: 'settings', icon: 'lock', label: AdminTexts.tabSettings, permission: Permissions.usersManage, create: create_SettingsTab },
 ];
 

@@ -1,6 +1,7 @@
 # Весь DocsSearch одной командой: PostgreSQL с pgvector, ядро на Go и веб на Node.js.
 # Запуск из каталога source: cp .env.example .env, задать DOCS_PASSWORD, затем docker compose up -d --build
 # Ollama по умолчанию берётся с хоста. Ollama в контейнере: docker compose --profile ollama up -d --build
+# Тестовый каталог LDAP для проверки входа: docker compose --profile ldap up -d (см. LDAP_DEMO.md)
 name: docssearch
 
 services:
@@ -52,6 +53,8 @@ services:
       LDAP_CA_CERT_FILE: ${LDAP_CA_CERT_FILE:-}
       LDAP_VALIDATE_CERT: ${LDAP_VALIDATE_CERT:-true}
       LDAP_CIPHERS: ${LDAP_CIPHERS:-ALL}
+      ENABLE_LDAP_GROUP_MANAGEMENT: ${ENABLE_LDAP_GROUP_MANAGEMENT:-false}
+      LDAP_ATTRIBUTE_FOR_GROUPS: ${LDAP_ATTRIBUTE_FOR_GROUPS:-memberOf}
     # Сертификат CA компании для LDAPS: положить в source/certs, раскомментировать
     # и указать путь /certs/<файл>.pem в LDAP_CA_CERT_FILE или в админ-панели
     # volumes:
@@ -146,6 +149,24 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Каталог LDAP для проверки входа без Active Directory компании: LLDAP с веб-интерфейсом.
+  # Сотрудников и группы создают в нём руками, ядро ходит к нему по адресу ldap:3890. Включается профилем ldap
+  ldap:
+    image: lldap/lldap:v0.6.1
+    profiles: ["ldap"]
+    environment:
+      LLDAP_LDAP_BASE_DN: ${LLDAP_BASE_DN:-dc=docssearch,dc=local}
+      LLDAP_LDAP_USER_PASS: ${LLDAP_ADMIN_PASSWORD:-}
+      LLDAP_JWT_SECRET: ${LLDAP_JWT_SECRET:-}
+      LLDAP_KEY_SEED: ${LLDAP_KEY_SEED:-}
+    volumes:
+      - ldap-data:/data
+    # Веб-интерфейс каталога только с этой машины
+    ports:
+      - "127.0.0.1:${LLDAP_WEB_PORT:-17170}:17170"
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   ollama-models:
+  ldap-data:

@@ -35,17 +35,35 @@ function get_AccountRoleId(account) {
 	return Array.isArray(account?.roleIds) && account.roleIds.length > 0 ? account.roleIds[0] : '';
 }
 
-// Роль новой учётной записи до выбора администратора
-const DefaultRoleId = 'role-user';
+// Что выбрано в списке ролей: ожидание подтверждения или роль из конструктора
+function get_AccountChoice(account, config) {
+	if (!account) {
+		return '';
+	}
+	return get_UserRole(account, config) === Roles.pending ? Roles.pending : get_AccountRoleId(account);
+}
 
-// Выпадающий список ролей. Новому пользователю по умолчанию - «Сотрудник», если такая роль есть
-function create_RoleIdSelect(roles, selectedRoleId, id) {
-	const fallback = roles.find((role) => role.roleId === DefaultRoleId) ?? roles[0];
-	const chosen = roles.some((role) => role.roleId === selectedRoleId) ? selectedRoleId : fallback?.roleId;
-	return create_Element('select', { className: 'select', attrs: { id } }, roles.map((role) => create_Element('option', {
-		text: role.title,
-		attrs: { value: role.roleId, selected: role.roleId === chosen, title: role.description || role.title },
-	})));
+// Выпадающий список: «Ожидает подтверждения» и роли из конструктора. Новому пользователю роль выбирают явно
+function create_RoleIdSelect(roles, chosen, id) {
+	const options = [
+		create_Element('option', { text: get_RoleLabel(Roles.pending), attrs: { value: Roles.pending, selected: chosen === Roles.pending } }),
+		...roles.map((role) => create_Element('option', {
+			text: role.title,
+			attrs: { value: role.roleId, selected: role.roleId === chosen, title: role.description || role.title },
+		})),
+	];
+	if (chosen === '') {
+		options.unshift(create_Element('option', { text: AdminTexts.usersChooseRole, attrs: { value: '', selected: true, disabled: true } }));
+	}
+	return create_Element('select', { className: 'select', attrs: { id } }, options);
+}
+
+// Смена выбора в списке: роль из конструктора (ядро снимает ожидание) или возврат к ожиданию
+function build_RoleChange(choice, initialChoice) {
+	if (choice === initialChoice) {
+		return {};
+	}
+	return choice === Roles.pending ? { role: Roles.pending } : { roleId: choice };
 }
 
 // Общая форма для создания и правки. При правке пароль меняется, только если поле заполнено.
@@ -62,14 +80,15 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 	const initialRole = isEdit ? get_UserRole(account, config) : Roles.user;
 	const roleSelect = create_RoleSelect(initialRole, 'user-role');
 	roleSelect.disabled = isSelf;
-	const initialRoleId = get_AccountRoleId(account);
-	const roleIdSelect = create_RoleIdSelect(roles, initialRoleId, 'user-role-id');
+	const initialChoice = get_AccountChoice(account, config);
+	const roleIdSelect = create_RoleIdSelect(roles, initialChoice, 'user-role-id');
 	roleIdSelect.disabled = isSelf;
 	const roleHint = create_Element('span', { className: 'field-hint' });
 	// Под списком - описание выбранной роли, чтобы было понятно, какие права она даёт
 	const show_RoleHint = () => {
 		const role = roles.find((item) => item.roleId === roleIdSelect.value);
-		roleHint.textContent = isSelf ? AdminTexts.usersSelfRoleHint : (role?.description || AdminTexts.usersFieldRoleIdHint);
+		const pendingHint = roleIdSelect.value === Roles.pending ? AdminTexts.usersFieldRoleHint : '';
+		roleHint.textContent = isSelf ? AdminTexts.usersSelfRoleHint : (pendingHint || role?.description || AdminTexts.usersFieldRoleIdHint);
 	};
 	roleIdSelect.addEventListener('change', show_RoleHint);
 	show_RoleHint();
@@ -119,9 +138,7 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 			changes.password = passwordInput.value;
 		}
 		if (!isSelf && roles.length > 0) {
-			if (roleIdSelect.value !== initialRoleId) {
-				changes.roleId = roleIdSelect.value;
-			}
+			Object.assign(changes, build_RoleChange(roleIdSelect.value, initialChoice));
 		} else if (!isSelf && roleSelect.value !== initialRole) {
 			changes.role = roleSelect.value;
 		}
@@ -142,6 +159,12 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 			loginInput.focus();
 			return;
 		}
+		if (roles.length > 0 && !isSelf && roleIdSelect.value === '') {
+			errorBox.textContent = AdminTexts.usersChooseRole;
+			errorBox.hidden = false;
+			roleIdSelect.focus();
+			return;
+		}
 		errorBox.hidden = true;
 		const changes = isEdit ? build_Changes() : null;
 		if (isEdit && Object.keys(changes).length === 0) {
@@ -156,9 +179,10 @@ function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) 
 					login: loginInput.value.trim(),
 					password: passwordInput.value,
 					displayName: nameInput.value.trim(),
-					role: roles.length > 0 ? Roles.user : roleSelect.value,
+					role: roles.length > 0 ? Roles.pending : roleSelect.value,
 				});
-			if (!isEdit && roles.length > 0 && get_AccountRoleId(saved) !== roleIdSelect.value) {
+			// Новая учётная запись создаётся ожидающей, роль из конструктора её подтверждает
+			if (!isEdit && roles.length > 0 && roleIdSelect.value !== Roles.pending) {
 				saved = await update_User(saved.userId, { roleId: roleIdSelect.value });
 			}
 			modal.close();
@@ -218,7 +242,8 @@ export function create_UsersTab({ user, config }) {
 
 	const render_RoleBadge = (account) => {
 		if (roles.length > 0) {
-			const role = roles.find((item) => item.roleId === get_AccountRoleId(account));
+			const isPending = get_UserRole(account, config) === Roles.pending;
+			const role = isPending ? null : roles.find((item) => item.roleId === get_AccountRoleId(account));
 			const label = role ? role.title : get_RoleLabel(get_UserRole(account, config));
 			return create_Element('span', { className: get_RoleBadgeClass(get_UserRole(account, config)), text: label, attrs: { title: role?.description ?? '' } });
 		}

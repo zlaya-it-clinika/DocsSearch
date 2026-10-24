@@ -100,6 +100,7 @@ type LiveStore struct {
 	dimensions   int
 	embedder     Embedder
 	authDefaults auth.Settings
+	reindex      reindexState
 }
 
 // Учётных записей по умолчанию нет: первая регистрация создаёт администратора, как в open-webui
@@ -144,7 +145,10 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 	if err = store.seed_DefaultProcess(ctx); err != nil {
 		return err
 	}
-	return store.seed_Roles(ctx)
+	if err = store.seed_Roles(ctx); err != nil {
+		return err
+	}
+	return store.grant_AIPermission(ctx)
 }
 
 func read_MigrationSQL() (string, error) {

@@ -33,6 +33,7 @@ const (
 	PermissionUsersManage     = "users.manage"
 	PermissionRolesManage     = "roles.manage"
 	PermissionAuditView       = "audit.view"
+	PermissionAIManage        = "ai.manage"
 	PermissionActionAssign    = "assign_role"
 	PermissionActionRevoke    = "revoke_role"
 	PermissionActionUpdate    = "update_role"
@@ -66,6 +67,11 @@ const (
 	ErrorKerberosDisabled   = "kerberos_disabled"
 	ErrorLdapUnavailable    = "ldap_unavailable"
 	ErrorLdapEmailMissing   = "ldap_email_missing"
+	ErrorOllamaUnavailable  = "ollama_unavailable"
+	ErrorModelNotFound      = "model_not_found"
+	ErrorModelInUse         = "model_in_use"
+	ErrorPullRunning        = "pull_running"
+	ErrorReindexRunning     = "reindex_running"
 
 	DefaultLdapLabel = "LDAP"
 
@@ -309,5 +315,14 @@ func Permission_Catalog() []PermissionInfo {
 		{PermissionUsersManage, "Пользователи", "Создавать учетные записи и назначать роли"},
 		{PermissionRolesManage, "Роли", "Создавать, менять и удалять роли"},
 		{PermissionAuditView, "Журналы", "Смотреть журнал вопросов и журнал изменений прав"},
+		{PermissionAIManage, "Модели ИИ", "Подключение к Ollama, выбор и скачивание моделей, параметры ответа"},
 	}
 }
+
+// Настройка локальной модели из админ-панели
+const (
+	// Пробный текст для проверки размера вектора новой модели эмбеддингов
+	AIEmbedProbe = "Проверка модели эмбеддингов"
+	// Вопрос для кнопки «Проверить» у модели
+	AITestPrompt = "Ответь одной короткой фразой по-русски: ты на связи?"
+)

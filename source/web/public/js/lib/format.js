@@ -69,7 +69,10 @@ export function format_FileSize(bytes) {
 	if (bytes < 1024 * 1024) {
 		return `${(bytes / 1024).toFixed(1)} ${FormatTexts.kilobytes}`;
 	}
-	return `${(bytes / 1024 / 1024).toFixed(1)} ${FormatTexts.megabytes}`;
+	if (bytes < 1024 * 1024 * 1024) {
+		return `${(bytes / 1024 / 1024).toFixed(1)} ${FormatTexts.megabytes}`;
+	}
+	return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} ${FormatTexts.gigabytes}`;
 }
 
 // Инициалы для аватара

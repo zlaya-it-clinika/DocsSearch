@@ -155,6 +155,9 @@ func (stubStore *stub) apply_GroupRoles(record *userRecord, groups []string, use
 		return
 	}
 	record.roleIDs = next
+	if _, matched := auth.Matched_GroupRole(groups, mapped); matched {
+		record.pending = false
+	}
 	stubStore.sync_Access(record)
 	stubStore.record_RoleDiff(record.id, record.id, old, next)
 }
