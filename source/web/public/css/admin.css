@@ -606,3 +606,101 @@
 	color: var(--color-text-faint);
 	font-size: var(--text-xs);
 }
+
+/* Вкладка «Модели ИИ» */
+
+.ai-url-row {
+	display: flex;
+	gap: var(--space-2);
+	align-items: center;
+}
+
+.ai-url-row > .input {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.ai-url-row > .button {
+	flex: none;
+}
+
+.ai-status {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	color: var(--color-text-muted);
+	font-size: var(--text-sm);
+}
+
+.ai-status-dot {
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--color-border-strong);
+}
+
+.ai-status-dot.is-online {
+	background: var(--color-success);
+}
+
+.ai-status-dot.is-offline {
+	background: var(--color-danger);
+}
+
+.ai-status-dot.is-checking {
+	background: var(--color-warning);
+}
+
+.progress {
+	width: 100%;
+	height: 6px;
+	overflow: hidden;
+	border-radius: var(--radius-pill);
+	background: var(--color-bg-subtle);
+}
+
+.progress-bar {
+	width: 0;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--color-accent);
+	transition: width var(--transition-fast);
+}
+
+.ai-pull-state {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.ai-index-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-3);
+}
+
+.ai-model-name {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 200px;
+}
+
+.ai-model-name .cell-title {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+	.ai-url-row {
+		flex-wrap: wrap;
+	}
+
+	.ai-url-row > .input {
+		flex-basis: 100%;
+	}
+}

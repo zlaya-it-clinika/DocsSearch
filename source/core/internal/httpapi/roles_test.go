@@ -73,6 +73,18 @@ func TestStubRolesFlagsAndDocumentVisibility(t *testing.T) {
 	if len(assigned.RoleIDs) != 1 || assigned.RoleIDs[0] != created.RoleID {
 		t.Fatalf("assigned roles %+v", assigned.RoleIDs)
 	}
+	// Роль из конструктора подтверждает ожидающую учётную запись, role pending возвращает ожидание
+	waiting := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"login": "waiting@corp.local", "password": "waiting-pass", "displayName": "Ждущий", "role": texts.RolePending,
+	}))
+	approved := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPatch, "/users/"+waiting.UserID, chiefToken, map[string]any{"roleId": texts.RoleIDUser}))
+	if waiting.Role != texts.RolePending || approved.Role != texts.RoleUser {
+		t.Fatalf("approval %s -> %s", waiting.Role, approved.Role)
+	}
+	onHold := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPatch, "/users/"+waiting.UserID, chiefToken, map[string]any{"role": texts.RolePending}))
+	if onHold.Role != texts.RolePending {
+		t.Fatalf("back to pending %s", onHold.Role)
+	}
 	for _, login := range []string{"не почта", "ivanov@corp", "ivanov@", "@corp.local"} {
 		badCreate := doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
 			"login": login, "password": "secret-pass", "displayName": "Иванов",

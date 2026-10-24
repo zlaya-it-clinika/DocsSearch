@@ -97,6 +97,10 @@ function build_Form(signup, ldapToggle, ldapServer) {
 	};
 	const tlsSwitch = create_Switch('ldap-use-tls', ldapServer.useTls);
 	const validateSwitch = create_Switch('ldap-validate-cert', ldapServer.validateCert);
+	// Роли по группам каталога: роль, у которой в конструкторе указана группа, назначается при входе
+	const groupsSwitch = create_Switch('ldap-enable-groups', ldapServer.enableGroupManagement);
+	const groupAttribute = create_TextField('ldap-group-attribute', SettingsTexts.groupAttribute, { value: ldapServer.groupAttribute, hint: SettingsTexts.groupAttributeHint });
+	const groupFields = create_Element('div', { className: 'form-grid' }, [groupAttribute.field]);
 
 	// Сертификат и шифры нужны только с TLS, как в open-webui
 	const tlsFields = create_Element('div', { className: 'form-grid' }, [
@@ -120,14 +124,18 @@ function build_Form(signup, ldapToggle, ldapServer) {
 		]),
 		create_SettingRow('ldap-use-tls', SettingsTexts.useTls, SettingsTexts.useTlsHint, tlsSwitch),
 		tlsFields,
+		create_SettingRow('ldap-enable-groups', SettingsTexts.enableGroups, SettingsTexts.enableGroupsHint, groupsSwitch),
+		groupFields,
 	]);
 
 	const sync_Visibility = () => {
 		serverBlock.hidden = !ldapSwitch.checked;
 		tlsFields.hidden = !tlsSwitch.checked;
+		groupFields.hidden = !groupsSwitch.checked;
 	};
 	ldapSwitch.addEventListener('change', sync_Visibility);
 	tlsSwitch.addEventListener('change', sync_Visibility);
+	groupsSwitch.addEventListener('change', sync_Visibility);
 	sync_Visibility();
 
 	const authSection = create_Element('section', { className: 'page-section' }, [
@@ -176,6 +184,8 @@ function build_Form(signup, ldapToggle, ldapServer) {
 				certificatePath: fields.certificatePath.input.value.trim(),
 				validateCert: validateSwitch.checked,
 				ciphers: fields.ciphers.input.value.trim(),
+				enableGroupManagement: groupsSwitch.checked,
+				groupAttribute: groupAttribute.input.value.trim(),
 			};
 		},
 		// После сохранения пароль из поля убираем: ядро его больше не отдаёт

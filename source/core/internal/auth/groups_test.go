@@ -27,6 +27,12 @@ func TestRoleIDs_ForGroupsKeepsChief(t *testing.T) {
 	if len(fallback) != 1 || fallback[0] != "role-user" {
 		t.Fatalf("fallback %v", fallback)
 	}
+	if roleID, found := Matched_GroupRole([]string{"CN=Архив,OU=Groups,DC=corp,DC=local"}, mapped); !found || roleID != "role-1" {
+		t.Fatalf("matched role %q %v", roleID, found)
+	}
+	if _, found := Matched_GroupRole([]string{"CN=Другая,OU=Groups,DC=corp,DC=local"}, mapped); found {
+		t.Fatal("unknown group matched")
+	}
 	chiefFallback := RoleIDs_ForGroups(nil, mapped, []string{"role-chief"}, "role-user")
 	if len(chiefFallback) != 1 || chiefFallback[0] != "role-chief" {
 		t.Fatalf("chief fallback %v", chiefFallback)

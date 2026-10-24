@@ -49,6 +49,18 @@ func RoleIDs_ForGroups(groups []string, mapped []GroupRole, current []string, de
 	if contains_RoleID(current, texts.RoleIDChief) {
 		return []string{texts.RoleIDChief}
 	}
+	if roleID, found := Matched_GroupRole(groups, mapped); found {
+		return []string{roleID}
+	}
+	if defaultRoleID == "" {
+		return []string{}
+	}
+	return []string{defaultRoleID}
+}
+
+// Первая роль, чья группа есть у пользователя в каталоге. Совпадение значит, что доступ одобрил каталог:
+// подтверждение администратора такому сотруднику не нужно
+func Matched_GroupRole(groups []string, mapped []GroupRole) (string, bool) {
 	known := map[string]struct{}{}
 	for _, group := range Group_Names(groups) {
 		known[strings.ToLower(group)] = struct{}{}
@@ -59,13 +71,10 @@ func RoleIDs_ForGroups(groups []string, mapped []GroupRole, current []string, de
 			continue
 		}
 		if _, found := known[name]; found {
-			return []string{role.RoleID}
+			return role.RoleID, true
 		}
 	}
-	if defaultRoleID == "" {
-		return []string{}
-	}
-	return []string{defaultRoleID}
+	return "", false
 }
 
 func contains_RoleID(ids []string, wanted string) bool {

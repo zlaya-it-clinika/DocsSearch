@@ -449,7 +449,13 @@ func (store *LiveStore) sync_GroupRoles(ctx context.Context, tx pgx.Tx, userID s
 	roleName := role_ForNewAccount(usersBefore, signup)
 	accessLevel, pending := auth.Access_ForRole(roleName)
 	next := auth.RoleIDs_ForGroups(groups, mapped, current, auth.RoleID_ForNewAccount(usersBefore, accessLevel, pending))
-	return store.replace_UserRoles(ctx, tx, userID, userID, next)
+	if err := store.replace_UserRoles(ctx, tx, userID, userID, next); err != nil {
+		return err
+	}
+	if _, matched := auth.Matched_GroupRole(groups, mapped); matched {
+		_, err = tx.Exec(ctx, `UPDATE users SET pending = false WHERE user_id = $1`, userID)
+	}
+	return err
 }
 
 func (store *LiveStore) assign_NewAccountRole(ctx context.Context, tx pgx.Tx, userID string, usersBefore, accessLevel int, pending bool) error {

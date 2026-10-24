@@ -340,7 +340,10 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 	if roleIDs == nil {
 		patch.AccessLevel = body.AccessLevel
 	} else {
+		// Роль из конструктора назначает администратор: учётная запись тем самым подтверждена
+		approved := false
 		patch.RoleIDs = roleIDs
+		patch.Pending = &approved
 	}
 	if body.DisplayName != nil {
 		displayName := strings.TrimSpace(*body.DisplayName)

@@ -71,6 +71,7 @@ export const Permissions = Object.freeze({
 	usersManage: 'users.manage',
 	rolesManage: 'roles.manage',
 	auditView: 'audit.view',
+	aiManage: 'ai.manage',
 });
 
 const employeePermissions = new Set([
