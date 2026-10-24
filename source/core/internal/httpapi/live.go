@@ -70,6 +70,7 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("GET /users", api.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", api.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", api.serve_PatchUser)
+	routeMux.HandleFunc("DELETE /users/{userId}", api.serve_DeleteUser)
 	routeMux.HandleFunc("GET /audit", api.serve_Audit)
 	routeMux.HandleFunc("GET /audit/permissions", api.serve_PermissionAudit)
 	routeMux.HandleFunc("POST /drafts/check", api.serve_DraftCheck)
@@ -383,9 +384,7 @@ func (api *liveAPI) serve_ListSessions(responseWriter http.ResponseWriter, reque
 			CanDelete: true,
 		})
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Sessions []sessionLine `json:"sessions"`
-	}{Sessions: lines})
+	write_JSONResponse(responseWriter, http.StatusOK, build_SessionList(lines))
 }
 
 func (api *liveAPI) serve_SessionHistory(responseWriter http.ResponseWriter, request *http.Request) {
@@ -1012,6 +1011,19 @@ func (api *liveAPI) serve_PatchUser(responseWriter http.ResponseWriter, request 
 		return
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, build_LiveAccountResponse(account))
+}
+
+func (api *liveAPI) serve_DeleteUser(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if err := api.store.Delete_Account(request.Context(), token, request.PathValue("userId")); err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (api *liveAPI) serve_Audit(responseWriter http.ResponseWriter, request *http.Request) {

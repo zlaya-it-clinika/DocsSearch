@@ -646,9 +646,7 @@ func TestStubSessionRenameAndDelete(t *testing.T) {
 	foreignID := createSession(t, handler, chiefToken)
 
 	listed := doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil)
-	var sessionList struct {
-		Sessions []sessionLine `json:"sessions"`
-	}
+	var sessionList sessionList
 	decodeInto(t, listed, &sessionList)
 	if len(sessionList.Sessions) != 1 || !sessionList.Sessions[0].CanRename || !sessionList.Sessions[0].CanDelete || sessionList.Sessions[0].Title == "" {
 		t.Fatalf("flags %+v", sessionList.Sessions)
@@ -687,8 +685,78 @@ func TestStubSessionRenameAndDelete(t *testing.T) {
 		t.Fatal("deleted session still opens")
 	}
 	decodeInto(t, doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil), &sessionList)
-	if len(sessionList.Sessions) != 0 {
-		t.Fatalf("list after delete %+v", sessionList.Sessions)
+	// Флаги рядом со списком: по ним веб показывает меню чата, даже когда чатов не осталось
+	if len(sessionList.Sessions) != 0 || !sessionList.CanRename || !sessionList.CanDelete {
+		t.Fatalf("list after delete %+v", sessionList)
+	}
+}
+
+func TestStubDeleteUser(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	sessionID := createSession(t, handler, employeeToken)
+	postMessage(t, handler, employeeToken, sessionID, "Как зарегистрировать входящий документ?")
+	personal := uploadMultipart(t, handler, "/documents", employeeToken, "mine.txt", "Личная заметка", map[string]string{
+		"title": "Личный документ", "scope": texts.ScopePersonal,
+	})
+	if personal.Code != http.StatusOK {
+		t.Fatalf("personal upload %d %s", personal.Code, personal.Body.String())
+	}
+	personalID := decodeJSON[uploadResponse](t, personal).DocumentID
+
+	if doJSON(t, handler, http.MethodDelete, "/users/"+texts.SeedAdminID, employeeToken, nil).Code != http.StatusForbidden {
+		t.Fatal("employee deleted a user")
+	}
+	if doJSON(t, handler, http.MethodDelete, "/users/"+texts.SeedAdminID, chiefToken, nil).Code != http.StatusForbidden {
+		t.Fatal("self delete")
+	}
+	if doJSON(t, handler, http.MethodDelete, "/users/missing", chiefToken, nil).Code != http.StatusNotFound {
+		t.Fatal("missing user")
+	}
+
+	// Администратор без roles.manage не удаляет главного администратора
+	admin := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"login": "admin2@corp.local", "password": "admin2-pass", "displayName": "Второй администратор", "role": texts.RoleUser,
+	}))
+	if doJSON(t, handler, http.MethodPatch, "/users/"+admin.UserID, chiefToken, map[string]any{"roleId": texts.RoleIDAdmin}).Code != http.StatusOK {
+		t.Fatal("admin role")
+	}
+	adminToken := login(t, handler, "admin2@corp.local", "admin2-pass")
+	if doJSON(t, handler, http.MethodDelete, "/users/"+texts.SeedAdminID, adminToken, nil).Code != http.StatusForbidden {
+		t.Fatal("admin deleted the chief")
+	}
+
+	if deleted := doJSON(t, handler, http.MethodDelete, "/users/"+texts.SeedEmployeeID, adminToken, nil); deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete %d %s", deleted.Code, deleted.Body.String())
+	}
+	if doJSON(t, handler, http.MethodGet, "/me", employeeToken, nil).Code != http.StatusUnauthorized {
+		t.Fatal("token of a deleted user still works")
+	}
+	if doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, chiefToken, nil).Code != http.StatusNotFound {
+		t.Fatal("session of a deleted user remains")
+	}
+	if hasDocument(listDocumentPage(t, handler, chiefToken, texts.ScopeAll).Documents, personalID) {
+		t.Fatal("personal document of a deleted user remains")
+	}
+	var users struct {
+		Users []accountResponse `json:"users"`
+	}
+	decodeInto(t, doJSON(t, handler, http.MethodGet, "/users", chiefToken, nil), &users)
+	for _, account := range users.Users {
+		if account.UserID == texts.SeedEmployeeID {
+			t.Fatal("deleted user is listed")
+		}
+	}
+	if doJSON(t, handler, http.MethodDelete, "/users/"+admin.UserID, chiefToken, nil).Code != http.StatusNoContent {
+		t.Fatal("chief could not delete an admin")
+	}
+	// Почта освободилась: под ней можно завести новую учетную запись
+	recreated := doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"login": "admin2@corp.local", "password": "new-pass", "displayName": "Новый сотрудник", "role": texts.RoleUser,
+	})
+	if recreated.Code != http.StatusOK {
+		t.Fatalf("recreate %d %s", recreated.Code, recreated.Body.String())
 	}
 }
 

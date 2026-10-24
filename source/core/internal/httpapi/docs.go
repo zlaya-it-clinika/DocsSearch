@@ -70,6 +70,7 @@ type docsConsoleView struct {
 	HintUsers                string
 	HintCreateUser           string
 	HintPatchUser            string
+	HintDeleteUser           string
 	HintAudit                string
 	HintDraft                string
 	HintAuthConfig           string
@@ -237,6 +238,7 @@ func consoleView() docsConsoleView {
 		HintUsers:                texts.DocsHintUsers,
 		HintCreateUser:           texts.DocsHintCreateUser,
 		HintPatchUser:            texts.DocsHintPatchUser,
+		HintDeleteUser:           texts.DocsHintDeleteUser,
 		HintAudit:                texts.DocsHintAudit,
 		HintDraft:                texts.DocsHintDraft,
 		HintAuthConfig:           texts.DocsHintAuthConfig,

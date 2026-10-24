@@ -518,6 +518,14 @@
 			<pre class="result"></pre>
 		</form>
 
+		<form class="call" data-method="DELETE">
+			<h2><span class="method delete">DELETE</span>/users/{userId}</h2>
+			<p class="hint">{{.HintDeleteUser}}</p>
+			<input name="path" value="/users/user-2">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
 		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/audit/permissions</h2>
 			<p class="hint">{{.HintPermissionAudit}}</p>

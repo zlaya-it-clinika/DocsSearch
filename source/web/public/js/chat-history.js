@@ -1,7 +1,8 @@
 // Список чатов для боковой панели.
 // Основной источник - GET /sessions ядра. Пока ядро его не отдаёт, помним чаты,
 // созданные в этом браузере: только id, заголовок и время, ответы всегда берутся из ядра.
-// Переименовать и удалить можно, только если ядро разрешило это флагами canRename и canDelete.
+// Переименовать и удалить можно, только если ядро разрешило это флагами canRename и canDelete
+// (рядом со списком или у строк сессий).
 // Закрепление - личная настройка этого браузера, ядру о нём знать не нужно.
 import { check_IsNotSupported, delete_ChatSession, list_ChatSessions, rename_ChatSession } from './api.js';
 import { read_Preference, write_Preference } from './preferences.js';
@@ -33,6 +34,12 @@ function normalize_Item(raw) {
 		createdAt: raw.createdAt ?? null,
 		updatedAt: raw.updatedAt ?? raw.createdAt ?? null,
 	};
+}
+
+// Флаги рядом со списком важнее. Ядро без них, но с флагами у строк, тоже разрешает действие
+function read_Permissions(payload, rawItems) {
+	const read_Flag = (name) => payload?.[name] === true || rawItems.some((raw) => raw?.[name] === true);
+	return { canRename: read_Flag('canRename'), canDelete: read_Flag('canDelete') };
 }
 
 function sort_ByRecent(items) {
@@ -92,7 +99,7 @@ export function create_ChatHistory(user) {
 				const rawItems = Array.isArray(payload?.sessions) ? payload.sessions : [];
 				source = HistorySources.core;
 				items = sort_ByRecent(rawItems.map(normalize_Item).filter(Boolean));
-				permissions = { canRename: payload?.canRename === true, canDelete: payload?.canDelete === true };
+				permissions = read_Permissions(payload, rawItems);
 			} catch (error) {
 				if (!check_IsNotSupported(error)) {
 					throw error;

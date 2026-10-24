@@ -479,6 +479,7 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("GET /users", stubStore.serve_ListUsers)
 	routeMux.HandleFunc("POST /users", stubStore.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", stubStore.serve_PatchUser)
+	routeMux.HandleFunc("DELETE /users/{userId}", stubStore.serve_DeleteUser)
 	routeMux.HandleFunc("GET /audit", stubStore.serve_Audit)
 	routeMux.HandleFunc("GET /audit/permissions", stubStore.serve_PermissionAudit)
 	routeMux.HandleFunc("POST /drafts/check", stubStore.serve_DraftCheck)
@@ -587,9 +588,7 @@ func (stubStore *stub) serve_ListSessions(responseWriter http.ResponseWriter, re
 		}
 		return lines[left].UpdatedAt > lines[right].UpdatedAt
 	})
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Sessions []sessionLine `json:"sessions"`
-	}{Sessions: lines})
+	write_JSONResponse(responseWriter, http.StatusOK, build_SessionList(lines))
 }
 
 func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, request *http.Request) {
@@ -1187,6 +1186,73 @@ func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, reque
 		stubStore.record_RoleDiff(actor.id, record.id, oldRoles, record.roleIDs)
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, record.account())
+}
+
+// Удаление учетной записи по тем же правилам, что в боевом режиме: себя нельзя,
+// главного администратора - только с roles.manage и если останется другой.
+// Вместе с ней уходят токены, сессии, черновики и личные документы
+func (stubStore *stub) serve_DeleteUser(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	actor, found := stubStore.require_AdminUser(responseWriter, request)
+	if !found {
+		return
+	}
+	record := stubStore.usersByID[request.PathValue("userId")]
+	if record == nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return
+	}
+	if actor.id == record.id {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	if contains_Role(record.roleIDs, texts.RoleIDChief) {
+		if !auth.Has_Permission(stubStore.permissions_Of(actor), texts.PermissionRolesManage) || stubStore.chiefs_After(record.id, nil) == 0 {
+			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+			return
+		}
+	}
+	stubStore.remove_UserData(record.id)
+	delete(stubStore.usersByID, record.id)
+	delete(stubStore.usersByLogin, strings.ToLower(record.login))
+	remaining := stubStore.users[:0]
+	for _, item := range stubStore.users {
+		if item.id != record.id {
+			remaining = append(remaining, item)
+		}
+	}
+	stubStore.users = remaining
+	stubStore.append_PermissionEvent(actor.id, texts.PermissionActionDeleteUser, "", record.id)
+	responseWriter.WriteHeader(http.StatusNoContent)
+}
+
+// Всё, что принадлежит только этому пользователю. Общие документы и журнал вопросов остаются
+func (stubStore *stub) remove_UserData(userID string) {
+	for token, ownerID := range stubStore.tokens {
+		if ownerID == userID {
+			delete(stubStore.tokens, token)
+		}
+	}
+	for sessionID, session := range stubStore.sessions {
+		if session.ownerID == userID {
+			delete(stubStore.sessions, sessionID)
+		}
+	}
+	for draftID, file := range stubStore.draftsByID {
+		if file.ownerID == userID {
+			delete(stubStore.draftsByID, draftID)
+		}
+	}
+	documents := stubStore.documents[:0]
+	for _, document := range stubStore.documents {
+		if document.scope == texts.ScopePersonal && document.ownerID == userID {
+			delete(stubStore.documentsByID, document.id)
+			continue
+		}
+		documents = append(documents, document)
+	}
+	stubStore.documents = documents
 }
 
 func (stubStore *stub) serve_Audit(responseWriter http.ResponseWriter, request *http.Request) {

@@ -285,6 +285,11 @@ export function update_User(userId, fields) {
 	return request_Api('PATCH', `/users/${encode_Segment(userId)}`, { json: fields });
 }
 
+// Удаление учётной записи вместе с её чатами, черновиками и личными документами
+export function delete_User(userId) {
+	return request_Api('DELETE', `/users/${encode_Segment(userId)}`);
+}
+
 export function fetch_AuditLog() {
 	return request_Api('GET', '/audit');
 }

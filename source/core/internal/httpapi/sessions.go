@@ -73,6 +73,18 @@ func (stubStore *stub) serve_DeleteSession(responseWriter http.ResponseWriter, r
 	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
+type sessionList struct {
+	Sessions  []sessionLine `json:"sessions"`
+	CanRename bool          `json:"canRename"`
+	CanDelete bool          `json:"canDelete"`
+}
+
+// Свои чаты пользователь всегда может переименовать и удалить. Флаги дублируются
+// рядом со списком: так клиент знает права, даже пока чатов нет
+func build_SessionList(lines []sessionLine) sessionList {
+	return sessionList{Sessions: lines, CanRename: true, CanDelete: true}
+}
+
 func read_SessionTitle(responseWriter http.ResponseWriter, request *http.Request) (string, bool) {
 	var body struct {
 		Title string `json:"title"`

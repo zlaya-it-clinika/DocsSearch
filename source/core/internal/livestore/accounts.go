@@ -251,6 +251,75 @@ func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string,
 	return updated, nil
 }
 
+// Удаление учетной записи вместе с тем, что принадлежит только ей: токены, сессии,
+// вложения, черновики и личные документы. Общие документы и журнал вопросов остаются.
+// Себя не удалить, главного администратора удаляет только обладатель roles.manage,
+// последнего главного администратора не удалить никому
+func (store *LiveStore) Delete_Account(ctx context.Context, token, userID string) error {
+	actor, err := store.require_Permission(ctx, token, texts.PermissionUsersManage)
+	if err != nil {
+		return err
+	}
+	if actor.UserID == userID {
+		return ErrAccessDenied
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// Под той же блокировкой, что и создание: две параллельные операции не оставят систему без главного администратора
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, accountsAdvisoryLock); err != nil {
+		return err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1)`, userID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	roleIDs, err := list_UserRoleIDs(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	if contains_ID(roleIDs, texts.RoleIDChief) {
+		if !actor.Has(texts.PermissionRolesManage) {
+			return ErrAccessDenied
+		}
+		var otherChiefs int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_roles WHERE role_id = $1 AND user_id <> $2`, texts.RoleIDChief, userID).Scan(&otherChiefs); err != nil {
+			return err
+		}
+		if otherChiefs == 0 {
+			return ErrAccessDenied
+		}
+	}
+	// Порядок важен: сообщения и файлы держат внешние ключи на сессии и пользователя.
+	// Фрагменты и роли личных документов уходят каскадом
+	cleanup := []string{
+		`DELETE FROM auth_tokens WHERE user_id = $1`,
+		`DELETE FROM session_messages WHERE session_id IN (SELECT session_id FROM sessions WHERE owner_user_id = $1)`,
+		`DELETE FROM session_attachments WHERE owner_user_id = $1`,
+		`DELETE FROM draft_files WHERE owner_user_id = $1`,
+		`DELETE FROM sessions WHERE owner_user_id = $1`,
+		`DELETE FROM documents WHERE scope = '` + texts.ScopePersonal + `' AND owner_id = $1`,
+	}
+	for _, statement := range cleanup {
+		if _, err := tx.Exec(ctx, statement, userID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	if err := insert_PermissionEvent(ctx, tx, actor.UserID, texts.PermissionActionDeleteUser, "", userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func check_RoleChanges(account Account, patch AccountPatch) bool {
 	if patch.RoleIDs != nil {
 		return true

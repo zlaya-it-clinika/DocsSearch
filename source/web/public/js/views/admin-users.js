@@ -1,5 +1,6 @@
-// Вкладка «Пользователи», как в open-webui: список, поиск, добавление, смена имени, почты, пароля и роли.
-import { create_User, list_Roles, list_Users, update_User } from '../api.js';
+// Вкладка «Пользователи», как в open-webui: список, поиск, добавление, смена имени, почты, пароля и роли, удаление.
+import { create_User, delete_User, list_Roles, list_Users, update_User } from '../api.js';
+import { open_Confirm } from '../components/confirm.js';
 import { open_Modal } from '../components/modal.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Button, create_Element, create_EmptyBlock, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
@@ -240,6 +241,27 @@ export function create_UsersTab({ user, config }) {
 		}
 	};
 
+	// Себя удалить нельзя. Остальные ограничения (главный администратор) проверяет ядро
+	const confirm_Delete = async (account) => {
+		const confirmed = await open_Confirm({
+			title: AdminTexts.usersDeleteTitle,
+			text: format_Text(AdminTexts.usersDeleteText, { name: account.displayName, login: account.login }),
+			confirmLabel: AdminTexts.usersDeleteConfirm,
+			danger: true,
+		});
+		if (!confirmed) {
+			return;
+		}
+		try {
+			await delete_User(account.userId);
+			accounts = accounts.filter((item) => item.userId !== account.userId);
+			render_Table();
+			show_Toast(AdminTexts.usersDeleted, 'success');
+		} catch (error) {
+			show_Toast(get_ErrorText(error), 'error');
+		}
+	};
+
 	const render_RoleBadge = (account) => {
 		if (roles.length > 0) {
 			const isPending = get_UserRole(account, config) === Roles.pending;
@@ -305,6 +327,9 @@ export function create_UsersTab({ user, config }) {
 								render_Table();
 							},
 						})),
+						account.userId === user.userId
+							? null
+							: create_IconButton('trash', `${AdminTexts.usersDelete}: ${account.displayName}`, () => confirm_Delete(account)),
 					]),
 				]))),
 			]),
