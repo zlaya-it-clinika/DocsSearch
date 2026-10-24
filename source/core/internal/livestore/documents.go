@@ -293,7 +293,8 @@ func global_VisibleSQL(roleParam string) string {
 		WHERE dr.document_id = d.document_id AND dr.role_id = ANY(` + roleParam + `::text[])))`
 }
 
-// Чужой личный документ не попадает в поиск, даже при documents.personal.view_all: этот флаг открывает список и удаление
+// Чужой личный документ не попадает в поиск, даже при documents.personal.view_all: этот флаг открывает список и удаление.
+// Фрагменты без вектора (ждут пересчета после смены модели эмбеддингов) в поиск не попадают
 func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding []float32, userID string, roleIDs []string, processID string, limit int) ([]SimilarChunk, error) {
 	return store.query_Chunks(ctx, embedding, limit, `
 		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope,
@@ -304,6 +305,7 @@ func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding [
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND NOT `+contacts.Title_SQLCondition()+`
 			AND ($4 = '' OR d.process_id = $4)
+			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $5`, role_Filter(roleIDs), userID, processID)
 }
@@ -321,6 +323,7 @@ func (store *LiveStore) Find_ClosedGlobalChunks(ctx context.Context, embedding [
 			)
 			AND NOT `+contacts.Title_SQLCondition()+`
 			AND ($3 = '' OR d.process_id = $3)
+			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $4`, role_Filter(roleIDs), processID)
 }
@@ -335,6 +338,7 @@ func (store *LiveStore) Find_ContactChunk(ctx context.Context, embedding []float
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND `+contacts.Title_SQLCondition()+`
 			AND ($4 = '' OR d.process_id = $4)
+			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $5`, role_Filter(roleIDs), userID, processID)
 	if err != nil {

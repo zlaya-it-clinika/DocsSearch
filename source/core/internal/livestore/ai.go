@@ -121,8 +121,31 @@ func (store *LiveStore) Start_Reindex(ctx context.Context, token string) (Reinde
 		return ReindexStatus{}, err
 	}
 	store.reindex.status = ReindexStatus{Running: true, Total: total}
-	go store.run_Reindex()
+	go store.run_Reindex(false)
 	return store.reindex.status, nil
+}
+
+// Пересчет фрагментов без вектора: после смены размерности (sync_EmbeddingDimensions) или прерванной переиндексации.
+// Вызывается при запуске, когда уже применены сохраненные настройки модели. false - пересчитывать нечего
+func (store *LiveStore) Start_PendingReindex() bool {
+	ctx := context.Background()
+	var missing int
+	if err := store.pool.QueryRow(ctx, `SELECT count(*) FROM chunks WHERE embedding IS NULL`).Scan(&missing); err != nil {
+		log.Printf("pending reindex: %v", err)
+		return false
+	}
+	if missing == 0 {
+		return false
+	}
+	store.reindex.mu.Lock()
+	defer store.reindex.mu.Unlock()
+	if store.reindex.status.Running {
+		return false
+	}
+	log.Printf("pending reindex: %d fragments without vectors", missing)
+	store.reindex.status = ReindexStatus{Running: true, Total: missing}
+	go store.run_Reindex(true)
+	return true
 }
 
 type reindexChunk struct {
@@ -134,9 +157,10 @@ type reindexChunk struct {
 	content   string
 }
 
-func (store *LiveStore) run_Reindex() {
+// onlyMissing - только фрагменты без вектора, иначе все
+func (store *LiveStore) run_Reindex(onlyMissing bool) {
 	ctx := context.Background()
-	failed := store.reindex_Chunks(ctx) != nil
+	failed := store.reindex_Chunks(ctx, onlyMissing) != nil
 	store.reindex.mu.Lock()
 	defer store.reindex.mu.Unlock()
 	store.reindex.status.Running = false
@@ -144,13 +168,14 @@ func (store *LiveStore) run_Reindex() {
 	store.reindex.status.FinishedAt = time.Now().UTC()
 }
 
-func (store *LiveStore) reindex_Chunks(ctx context.Context) error {
+func (store *LiveStore) reindex_Chunks(ctx context.Context, onlyMissing bool) error {
 	// Вектор строится так же, как при загрузке: адрес фрагмента плюс текст
 	rows, err := store.pool.Query(ctx, `
 		SELECT c.chunk_id, d.title, c.section, c.paragraph, c.appendix, c.content
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
-		ORDER BY c.chunk_id`)
+		WHERE NOT $1 OR c.embedding IS NULL
+		ORDER BY c.chunk_id`, onlyMissing)
 	if err != nil {
 		return err
 	}

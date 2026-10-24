@@ -142,6 +142,9 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 	if _, err = store.pool.Exec(ctx, schema); err != nil {
 		return err
 	}
+	if err = store.sync_EmbeddingDimensions(ctx); err != nil {
+		return err
+	}
 	if err = store.seed_DefaultProcess(ctx); err != nil {
 		return err
 	}
