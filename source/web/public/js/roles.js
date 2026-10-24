@@ -73,6 +73,7 @@ export const Permissions = Object.freeze({
 	auditView: 'audit.view',
 	aiManage: 'ai.manage',
 	organizationManage: 'organization.manage',
+	sourcesManage: 'sources.manage',
 });
 
 const employeePermissions = new Set([
@@ -108,5 +109,6 @@ export function can_OpenAdmin(user, config) {
 		Permissions.globalManage,
 		Permissions.personalViewAll,
 		Permissions.organizationManage,
+		Permissions.sourcesManage,
 	].some((permission) => has_Permission(user, config, permission));
 }

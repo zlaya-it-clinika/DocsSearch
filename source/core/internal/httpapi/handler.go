@@ -68,6 +68,8 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 		routeMux = register_LiveRoutes(store, embedder, layoutFormat)
 		register_AIRoutes(routeMux, create_LiveAIAdmin(store, embedder))
 		register_OrganizationRoutes(routeMux, store)
+		register_SourceRoutes(routeMux, store)
+		store.Start_SourceLoop()
 		routeHandler = routeMux
 	} else {
 		stubStore := create_StubStore(loadedConfig.StubWithoutUsers, loadedConfig.AuthDefaults, layoutFormat)
@@ -75,6 +77,7 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 		client := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel, loadedConfig.OllamaChatModel)
 		register_AIRoutes(routeMux, stubStore.create_AIAdmin(client, loadedConfig.OllamaEmbedDimensions))
 		register_OrganizationRoutes(routeMux, stubStore.create_Organization())
+		register_SourceRoutes(routeMux, stubStore)
 		// В боевом режиме ожидающих отсекает хранилище, в заглушке - эта обёртка
 		routeHandler = stubStore.reject_PendingUsers(routeMux)
 	}

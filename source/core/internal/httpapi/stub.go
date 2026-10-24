@@ -57,8 +57,10 @@ type documentRecord struct {
 	fileName     string
 	contentType  string
 	body         []byte
-	visibleToAll bool
-	roleIDs      []string
+	visibleToAll     bool
+	roleIDs          []string
+	sourceID         string
+	sourceExternalID string
 }
 
 type processRecord struct {
@@ -313,6 +315,11 @@ type stub struct {
 	nextAudit           int
 	nextRole            int
 	nextPermissionEvent int
+	nextSource          int
+	sources             []*livestore.DocumentSource
+	sourcesByID         map[string]*livestore.DocumentSource
+	sourceItems         map[string]stubSourceItem
+	sourceRunning       map[string]bool
 	// Настройки входа живут в памяти, как и остальные данные заглушки
 	signupSettings auth.SignupSettings
 	ldapSettings   auth.LdapSettings
@@ -341,7 +348,11 @@ func create_StubStore(withoutUsers bool, authDefaults auth.Settings, layoutForma
 		nextAudit:           1,
 		nextRole:            1,
 		nextPermissionEvent: 1,
+		nextSource:          1,
 		rolesByID:           map[string]*roleRecord{},
+		sourcesByID:         map[string]*livestore.DocumentSource{},
+		sourceItems:         map[string]stubSourceItem{},
+		sourceRunning:       map[string]bool{},
 		signupSettings:      authDefaults.Signup,
 		ldapSettings:        authDefaults.Ldap,
 		layoutFormat:        layoutFormat,
@@ -1098,6 +1109,9 @@ func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, 
 }
 
 func same_DocumentTitle(document *documentRecord, title, scope, ownerID string) bool {
+	if document.sourceID != "" {
+		return false
+	}
 	if document.title != title || document.scope != scope {
 		return false
 	}

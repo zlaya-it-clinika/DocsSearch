@@ -406,3 +406,35 @@ export function build_OrganizationImageUrl(kind, version = '') {
 export function fetch_Reindex() {
 	return request_Api('GET', '/ai/reindex');
 }
+
+export function list_SourceKinds() {
+	return request_Api('GET', '/sources/kinds');
+}
+
+export function list_Sources() {
+	return request_Api('GET', '/sources');
+}
+
+export function create_Source(fields) {
+	return request_Api('POST', '/sources', { json: fields });
+}
+
+export function update_Source(sourceId, fields) {
+	return request_Api('PATCH', `/sources/${encode_Segment(sourceId)}`, { json: fields });
+}
+
+export function delete_Source(sourceId) {
+	return request_Api('DELETE', `/sources/${encode_Segment(sourceId)}`);
+}
+
+export function verify_Source(sourceId) {
+	return request_Api('POST', `/sources/${encode_Segment(sourceId)}/verify`);
+}
+
+export function sync_Source(sourceId) {
+	return request_Api('POST', `/sources/${encode_Segment(sourceId)}/sync`);
+}
+
+export function fetch_SourceRun(sourceId) {
+	return request_Api('GET', `/sources/${encode_Segment(sourceId)}/runs`);
+}

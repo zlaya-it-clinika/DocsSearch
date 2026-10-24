@@ -35,6 +35,7 @@ const (
 	PermissionAuditView          = "audit.view"
 	PermissionAIManage           = "ai.manage"
 	PermissionOrganizationManage = "organization.manage"
+	PermissionSourcesManage      = "sources.manage"
 	PermissionActionAssign       = "assign_role"
 	PermissionActionRevoke       = "revoke_role"
 	PermissionActionUpdate       = "update_role"
@@ -51,30 +52,35 @@ const (
 	// Сколько названий документов процесса попадает в подсказку модели
 	ProcessMapLimit = 40
 
-	ErrorInvalidCredentials = "invalid_credentials"
-	ErrorUnauthorized       = "unauthorized"
-	ErrorAccessDenied       = "access_denied"
-	ErrorNotFound           = "not_found"
-	ErrorLoginTaken         = "login_taken"
-	ErrorRoleInUse          = "role_in_use"
-	ErrorInvalidBody        = "invalid_body"
-	ErrorLiveNotReady       = "live_not_ready"
-	ErrorEmbedSize          = "embed_size_mismatch"
-	ErrorImageInvalid       = "image_invalid"
-	ErrorEmbedUnavailable   = "embed_unavailable"
-	ErrorStore              = "store_unavailable"
-	ErrorSignupDisabled     = "signup_disabled"
-	ErrorAccountPending     = "account_pending"
-	ErrorInvalidEmail       = "invalid_email"
-	ErrorLdapDisabled       = "ldap_disabled"
-	ErrorKerberosDisabled   = "kerberos_disabled"
-	ErrorLdapUnavailable    = "ldap_unavailable"
-	ErrorLdapEmailMissing   = "ldap_email_missing"
-	ErrorOllamaUnavailable  = "ollama_unavailable"
-	ErrorModelNotFound      = "model_not_found"
-	ErrorModelInUse         = "model_in_use"
-	ErrorPullRunning        = "pull_running"
-	ErrorReindexRunning     = "reindex_running"
+	ErrorInvalidCredentials  = "invalid_credentials"
+	ErrorUnauthorized        = "unauthorized"
+	ErrorAccessDenied        = "access_denied"
+	ErrorNotFound            = "not_found"
+	ErrorLoginTaken          = "login_taken"
+	ErrorRoleInUse           = "role_in_use"
+	ErrorInvalidBody         = "invalid_body"
+	ErrorLiveNotReady        = "live_not_ready"
+	ErrorEmbedSize           = "embed_size_mismatch"
+	ErrorImageInvalid        = "image_invalid"
+	ErrorEmbedUnavailable    = "embed_unavailable"
+	ErrorStore               = "store_unavailable"
+	ErrorSignupDisabled      = "signup_disabled"
+	ErrorAccountPending      = "account_pending"
+	ErrorInvalidEmail        = "invalid_email"
+	ErrorLdapDisabled        = "ldap_disabled"
+	ErrorKerberosDisabled    = "kerberos_disabled"
+	ErrorLdapUnavailable     = "ldap_unavailable"
+	ErrorLdapEmailMissing    = "ldap_email_missing"
+	ErrorOllamaUnavailable   = "ollama_unavailable"
+	ErrorModelNotFound       = "model_not_found"
+	ErrorModelInUse          = "model_in_use"
+	ErrorPullRunning         = "pull_running"
+	ErrorReindexRunning      = "reindex_running"
+	ErrorSourceNotConfigured = "source_not_configured"
+	ErrorSourceKindUnknown   = "source_kind_unknown"
+	ErrorSourceLicense       = "source_license_denied"
+	ErrorSourceUnavailable   = "source_unavailable"
+	ErrorSourceSyncRunning   = "source_sync_running"
 
 	DefaultLdapLabel = "LDAP"
 
@@ -343,6 +349,7 @@ func Permission_Catalog() []PermissionInfo {
 		{PermissionAuditView, "Журналы", "Смотреть журнал вопросов и журнал изменений прав"},
 		{PermissionAIManage, "Модели ИИ", "Подключение к Ollama, выбор и скачивание моделей, параметры ответа"},
 		{PermissionOrganizationManage, "Реквизиты организации", "Генеральный директор, должностные лица, герб и штамп для документов"},
+		{PermissionSourcesManage, "Источники документов", "Автозагрузка из папки и лицензионного API, включение по расписанию"},
 	}
 }
 
@@ -352,4 +359,33 @@ const (
 	AIEmbedProbe = "Проверка модели эмбеддингов"
 	// Вопрос для кнопки «Проверить» у модели
 	AITestPrompt = "Ответь одной короткой фразой по-русски: ты на связи?"
+)
+
+// Автозагрузка документов: виды источников и демо-фрагмент для проверки цикла
+const (
+	SourceKindFolderTitle       = "Каталог на диске"
+	SourceKindFolderLead        = "Папка с .txt, .pdf или .docx. Так же забирается лицензионная выгрузка Консультант Плюс."
+	SourceKindDemoTitle         = "Демо"
+	SourceKindDemoLead          = "Один встроенный фрагмент. Нужен, чтобы проверить синхронизацию без сети."
+	SourceKindConsultantTitle   = "Консультант Плюс"
+	SourceKindConsultantLead    = "Лицензионный API организации. Адрес и ключ выдаёт поставщик. Сайт консультанта не разбираем."
+	SourceDemoTitle             = "Демо-фрагмент источника"
+	SourceDemoBody              = "Пункт 1.1. Входящий документ регистрируют в день поступления.\n"
+	SourceStatusIdle            = "idle"
+	SourceStatusRunning         = "running"
+	SourceStatusOK              = "ok"
+	SourceStatusError           = "error"
+	DocsHintSources             = "Список источников автозагрузки. Нужен флаг sources.manage. Секрет лицензии в ответе не приходит, только licenseKeySet."
+	DocsHintSourceKinds         = "Виды коннекторов и поля настроек. folder, demo, consultantplus."
+	DocsHintCreateSource        = "Новый источник. enabled по умолчанию false. kind: folder, demo или consultantplus. Включить consultantplus без baseUrl и licenseKey нельзя."
+	DocsHintPatchSource         = "Имя, интервал, процесс, роли, config, enabled. Пустой licenseKey оставляет прежний ключ."
+	DocsHintDeleteSource        = "Удаляет источник. Загруженные документы остаются в базе, связь с источником снимается. Ответ 204."
+	DocsHintVerifySource        = "Проверка доступа: папка читается, лицензионный API отвечает на /v1/status."
+	DocsHintSyncSource          = "Внеочередной прогон. Выключенный источник цикл сам не трогает, эта кнопка работает."
+	DocsHintSourceRuns          = "Статус последнего прогона: lastStatus, lastError, lastSyncAt."
+	DocsExampleCreateSourceBody = `{
+  "kind": "demo",
+  "title": "Демо",
+  "intervalMinutes": 60
+}`
 )

@@ -63,7 +63,7 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 	var documentID string
 	err = tx.QueryRow(ctx, `
 		SELECT document_id FROM documents
-		WHERE title = $1 AND scope = $2 AND (($2 = 'global') OR owner_id = $3)`,
+		WHERE title = $1 AND scope = $2 AND source_id = '' AND (($2 = 'global') OR owner_id = $3)`,
 		input.Title, input.Scope, input.OwnerID).Scan(&documentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		number, nextError := next_IDTx(ctx, tx, counterDocument)

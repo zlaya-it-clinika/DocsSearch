@@ -418,6 +418,72 @@
 		</form>
 
 		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/sources</h2>
+			<p class="hint">{{.HintSources}}</p>
+			<input name="path" value="/sources">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/sources/kinds</h2>
+			<p class="hint">{{.HintSourceKinds}}</p>
+			<input name="path" value="/sources/kinds">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/sources</h2>
+			<p class="hint">{{.HintCreateSource}}</p>
+			<input name="path" value="/sources">
+			<textarea name="body" rows="6">{{.ExampleCreateSourceBody}}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="PATCH">
+			<h2><span class="method patch">PATCH</span>/sources/{sourceId}</h2>
+			<p class="hint">{{.HintPatchSource}}</p>
+			<input name="path" value="/sources/source-1">
+			<textarea name="body" rows="4">{"enabled": true}</textarea>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="DELETE">
+			<h2><span class="method delete">DELETE</span>/sources/{sourceId}</h2>
+			<p class="hint">{{.HintDeleteSource}}</p>
+			<input name="path" value="/sources/source-1">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/sources/{sourceId}/verify</h2>
+			<p class="hint">{{.HintVerifySource}}</p>
+			<input name="path" value="/sources/source-1/verify">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="POST">
+			<h2><span class="method post">POST</span>/sources/{sourceId}/sync</h2>
+			<p class="hint">{{.HintSyncSource}}</p>
+			<input name="path" value="/sources/source-1/sync">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/sources/{sourceId}/runs</h2>
+			<p class="hint">{{.HintSourceRuns}}</p>
+			<input name="path" value="/sources/source-1/runs">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
 			<h2><span class="method get">GET</span>/processes</h2>
 			<p class="hint">{{.HintProcesses}}</p>
 			<input name="path" value="/processes">

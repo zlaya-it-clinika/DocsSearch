@@ -20,6 +20,7 @@ const (
 	counterDocument = "document"
 	counterSession  = "session"
 	counterAudit    = "audit"
+	counterSource   = "source"
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 	ErrAccountPending     = errors.New("account pending")
 	ErrLdapDisabled       = errors.New("ldap disabled")
 	ErrKerberosDisabled   = errors.New("kerberos disabled")
+	ErrSourceSyncRunning  = errors.New("source sync running")
 )
 
 type Embedder interface {
@@ -101,6 +103,7 @@ type LiveStore struct {
 	embedder     Embedder
 	authDefaults auth.Settings
 	reindex      reindexState
+	sourceSync   sourceSyncState
 }
 
 // Учётных записей по умолчанию нет: первая регистрация создаёт администратора, как в open-webui
@@ -154,12 +157,15 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 	if err = store.grant_AIPermission(ctx); err != nil {
 		return err
 	}
-	return store.grant_PermissionOnce(ctx, settingsKeyOrganizationPermission, texts.PermissionOrganizationManage)
+	if err = store.grant_PermissionOnce(ctx, settingsKeyOrganizationPermission, texts.PermissionOrganizationManage); err != nil {
+		return err
+	}
+	return store.grant_PermissionOnce(ctx, settingsKeySourcesPermission, texts.PermissionSourcesManage)
 }
 
 func read_MigrationSQL() (string, error) {
 	var builder strings.Builder
-	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql", "008_organization.sql", "009_chat_mode.sql"} {
+	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql", "008_organization.sql", "009_chat_mode.sql", "010_document_sources.sql"} {
 		raw, err := read_MigrationFile(name)
 		if err != nil {
 			return "", err

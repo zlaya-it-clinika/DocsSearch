@@ -84,6 +84,14 @@ type docsConsoleView struct {
 	HintSaveLdapToggle       string
 	HintLdapServer           string
 	HintSaveLdapServer       string
+	HintSources              string
+	HintSourceKinds          string
+	HintCreateSource         string
+	HintPatchSource          string
+	HintDeleteSource         string
+	HintVerifySource         string
+	HintSyncSource           string
+	HintSourceRuns           string
 	ExampleLoginBody         string
 	ExampleSignupBody        string
 	ExampleLdapLoginBody     string
@@ -97,6 +105,7 @@ type docsConsoleView struct {
 	ExamplePatchUserBody     string
 	ExampleCreateRoleBody    string
 	ExamplePatchRoleBody     string
+	ExampleCreateSourceBody  string
 }
 
 func create_DocsGate(password string) *docsGate {
@@ -252,6 +261,14 @@ func consoleView() docsConsoleView {
 		HintSaveLdapToggle:       texts.DocsHintSaveLdapToggle,
 		HintLdapServer:           texts.DocsHintLdapServer,
 		HintSaveLdapServer:       texts.DocsHintSaveLdapServer,
+		HintSources:              texts.DocsHintSources,
+		HintSourceKinds:          texts.DocsHintSourceKinds,
+		HintCreateSource:         texts.DocsHintCreateSource,
+		HintPatchSource:          texts.DocsHintPatchSource,
+		HintDeleteSource:         texts.DocsHintDeleteSource,
+		HintVerifySource:         texts.DocsHintVerifySource,
+		HintSyncSource:           texts.DocsHintSyncSource,
+		HintSourceRuns:           texts.DocsHintSourceRuns,
 		ExampleLoginBody:         texts.DocsExampleLoginBody,
 		ExampleSignupBody:        texts.DocsExampleSignupBody,
 		ExampleLdapLoginBody:     texts.DocsExampleLdapLoginBody,
@@ -265,6 +282,7 @@ func consoleView() docsConsoleView {
 		ExamplePatchUserBody:     texts.DocsExamplePatchUserBody,
 		ExampleCreateRoleBody:    texts.DocsExampleCreateRoleBody,
 		ExamplePatchRoleBody:     texts.DocsExamplePatchRoleBody,
+		ExampleCreateSourceBody:  texts.DocsExampleCreateSourceBody,
 	}
 }
 
