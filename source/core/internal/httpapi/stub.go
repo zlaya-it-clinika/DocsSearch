@@ -44,6 +44,8 @@ type userRecord struct {
 	pending     bool
 	createdAt   time.Time
 	roleIDs     []string
+	// Запись создал вход через каталог. Только в такие записи каталог и пускает
+	directory bool
 }
 
 type documentRecord struct {
@@ -1150,10 +1152,7 @@ func (stubStore *stub) serve_DocumentFile(responseWriter http.ResponseWriter, re
 		write_ErrorResponse(responseWriter, status, texts.ErrorAccessDenied)
 		return
 	}
-	responseWriter.Header().Set("Content-Type", document.contentType)
-	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(document.fileName))
-	responseWriter.WriteHeader(http.StatusOK)
-	_, _ = responseWriter.Write(document.body)
+	write_FileResponse(responseWriter, document.fileName, document.contentType, document.body)
 }
 
 // Документ, который сотрудник видит, или код ошибки для ответа
@@ -1852,11 +1851,9 @@ func read_UploadedFile(responseWriter http.ResponseWriter, request *http.Request
 	if err != nil {
 		return "", nil, "", err
 	}
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = http.DetectContentType(body)
-	}
-	return header.Filename, body, contentType, nil
+	// Тип файла задает ядро по расширению, а не браузер: присланный text/html или image/svg+xml
+	// при скачивании мог бы открыться как страница с нашего адреса
+	return header.Filename, body, contentType_ForFile(header.Filename), nil
 }
 
 func contentType_ForFile(fileName string) string {

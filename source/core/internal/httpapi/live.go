@@ -1001,10 +1001,7 @@ func (api *liveAPI) serve_DocumentFile(responseWriter http.ResponseWriter, reque
 		write_LiveError(responseWriter, err)
 		return
 	}
-	responseWriter.Header().Set("Content-Type", file.ContentType)
-	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(file.FileName))
-	responseWriter.WriteHeader(http.StatusOK)
-	_, _ = responseWriter.Write(file.Body)
+	write_FileResponse(responseWriter, file.FileName, file.ContentType, file.Body)
 }
 
 func (api *liveAPI) serve_ListEditions(responseWriter http.ResponseWriter, request *http.Request) {
@@ -1213,6 +1210,8 @@ func write_LiveError(responseWriter http.ResponseWriter, err error) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 	case errors.Is(err, livestore.ErrNotFound):
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+	case errors.Is(err, livestore.ErrDirectoryAccountConflict):
+		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorDirectoryAccountConflict)
 	case errors.Is(err, livestore.ErrLoginTaken):
 		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorLoginTaken)
 	case errors.Is(err, livestore.ErrStandardDocument):

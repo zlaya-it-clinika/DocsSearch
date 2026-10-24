@@ -33,6 +33,9 @@ export function apply_SecurityHeaders(response, config, kind) {
 
 	if (kind === 'api') {
 		response.setHeader('Cache-Control', 'no-store');
+		// Ответ API (JSON или файл документа) не страница: если браузер всё же откроет его,
+		// скрипты, стили и встраивание запрещены
+		response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; sandbox");
 		return;
 	}
 	const frameAncestors = kind === 'embed'

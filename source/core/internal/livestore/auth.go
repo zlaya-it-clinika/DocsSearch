@@ -148,9 +148,17 @@ func (store *LiveStore) login_DirectoryIdentity(ctx context.Context, ldapSetting
 	}
 	var result LoginResult
 	err = store.run_AccountsTransaction(ctx, func(tx pgx.Tx, usersBefore int) error {
-		account, err := scan_Account(tx.QueryRow(ctx, `
-			SELECT `+accountColumns+` FROM users WHERE lower(login) = lower($1)
-			ORDER BY created_at LIMIT 1`, identity.Email))
+		var account Account
+		var directoryAccount bool
+		err := tx.QueryRow(ctx, `
+			SELECT `+accountColumns+`, directory_account FROM users WHERE lower(login) = lower($1)
+			ORDER BY created_at LIMIT 1`, identity.Email).
+			Scan(&account.UserID, &account.Login, &account.DisplayName, &account.AccessLevel, &account.Pending, &account.CreatedAt, &directoryAccount)
+		// Локальную запись с той же почтой каталог не забирает: иначе пользователь каталога, сменивший себе mail,
+		// вошел бы под чужой учетной записью, а заранее зарегистрированная запись досталась бы ее создателю
+		if err == nil && !directoryAccount {
+			return ErrDirectoryAccountConflict
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			passwordHash, hashError := create_UnusablePasswordHash()
 			if hashError != nil {
@@ -159,6 +167,9 @@ func (store *LiveStore) login_DirectoryIdentity(ctx context.Context, ldapSetting
 			accessLevel, pending := auth.Access_ForRole(role_ForNewAccount(usersBefore, signup))
 			account, err = insert_Account(ctx, tx, identity.Email, passwordHash, identity.Name, accessLevel, pending)
 			if err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE users SET directory_account = true WHERE user_id = $1`, account.UserID); err != nil {
 				return err
 			}
 			if err = store.assign_NewAccountRole(ctx, tx, account.UserID, usersBefore, accessLevel, pending); err != nil {

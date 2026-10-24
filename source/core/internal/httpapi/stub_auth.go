@@ -90,23 +90,37 @@ func (stubStore *stub) serve_LdapLogin(responseWriter http.ResponseWriter, reque
 	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	record := stubStore.find_UserByLogin(identity.Email)
-	usersBefore := len(stubStore.users)
-	if record == nil {
-		randomPassword, err := create_RandomToken()
-		if err != nil {
-			write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
-			return
-		}
-		accessLevel, pending := auth.Access_ForRole(stubStore.role_ForNewAccount(usersBefore))
-		record = stubStore.create_NextUser(identity.Email, randomPassword, identity.Name, accessLevel, pending)
-	} else {
-		usersBefore = len(stubStore.users)
+	record, usersBefore, ok := stubStore.find_OrCreateDirectoryUser(responseWriter, identity)
+	if !ok {
+		return
 	}
 	if ldapSettings.EnableGroupManagement {
 		stubStore.apply_GroupRoles(record, identity.Groups, usersBefore)
 	}
 	stubStore.write_LoginForRecord(responseWriter, record)
+}
+
+// Учетная запись для входа через каталог: созданная каталогом ранее или новая.
+// Локальную запись с той же почтой не отдаем, как и боевой режим. Вызывать под stubStore.mu
+func (stubStore *stub) find_OrCreateDirectoryUser(responseWriter http.ResponseWriter, identity auth.LdapIdentity) (*userRecord, int, bool) {
+	record := stubStore.find_UserByLogin(identity.Email)
+	usersBefore := len(stubStore.users)
+	if record != nil {
+		if !record.directory {
+			write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorDirectoryAccountConflict)
+			return nil, 0, false
+		}
+		return record, usersBefore, true
+	}
+	randomPassword, err := create_RandomToken()
+	if err != nil {
+		write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
+		return nil, 0, false
+	}
+	accessLevel, pending := auth.Access_ForRole(stubStore.role_ForNewAccount(usersBefore))
+	record = stubStore.create_NextUser(identity.Email, randomPassword, identity.Name, accessLevel, pending)
+	record.directory = true
+	return record, usersBefore, true
 }
 
 type ldapDirectoryUser struct {

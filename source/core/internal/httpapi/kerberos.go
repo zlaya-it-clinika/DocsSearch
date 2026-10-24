@@ -62,16 +62,9 @@ func (stubStore *stub) serve_KerberosLogin(responseWriter http.ResponseWriter, r
 		}
 		stubStore.mu.Lock()
 		defer stubStore.mu.Unlock()
-		record := stubStore.find_UserByLogin(identity.Email)
-		usersBefore := len(stubStore.users)
-		if record == nil {
-			randomPassword, passwordError := create_RandomToken()
-			if passwordError != nil {
-				write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
-				return
-			}
-			accessLevel, pending := auth.Access_ForRole(stubStore.role_ForNewAccount(usersBefore))
-			record = stubStore.create_NextUser(identity.Email, randomPassword, identity.Name, accessLevel, pending)
+		record, usersBefore, ok := stubStore.find_OrCreateDirectoryUser(responseWriter, identity)
+		if !ok {
+			return
 		}
 		if settings.EnableGroupManagement {
 			stubStore.apply_GroupRoles(record, identity.Groups, usersBefore)

@@ -248,6 +248,44 @@ func TestStubLdapGroupAssignsRole(t *testing.T) {
 	}
 }
 
+func TestStubLdapDoesNotTakeLocalAccount(t *testing.T) {
+	t.Cleanup(func() { ldapDirectory = nil })
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	server := map[string]any{
+		"label": "Active Directory", "host": "127.0.0.1", "attributeForMail": "mail",
+		"attributeForUsername": "sAMAccountName", "searchBase": "DC=corp,DC=local", "ciphers": "ALL",
+	}
+	if doJSON(t, handler, http.MethodPost, "/auth/admin/config/ldap/server", chiefToken, server).Code != http.StatusOK {
+		t.Fatal("ldap server")
+	}
+	if doJSON(t, handler, http.MethodPost, "/auth/admin/config/ldap", chiefToken, map[string]bool{"enableLdap": true}).Code != http.StatusOK {
+		t.Fatal("ldap toggle")
+	}
+	// Локальная запись с почтой, которую потом вернет каталог
+	local := doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"email": "petrov@corp.local", "password": "local-secret", "displayName": "Петров", "role": "user",
+	})
+	if local.Code != http.StatusOK {
+		t.Fatalf("local user %d %s", local.Code, local.Body.String())
+	}
+	ldapDirectory = map[string]ldapDirectoryUser{
+		"petrov":  {password: "secret", identity: auth.LdapIdentity{Email: "petrov@corp.local", Name: "Петров"}},
+		"sidorov": {password: "secret", identity: auth.LdapIdentity{Email: "sidorov@corp.local", Name: "Сидоров"}},
+	}
+	conflict := doJSON(t, handler, http.MethodPost, "/auth/ldap", "", map[string]string{"login": "petrov", "password": "secret"})
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), texts.ErrorDirectoryAccountConflict) {
+		t.Fatalf("ldap into local account %d %s", conflict.Code, conflict.Body.String())
+	}
+	// Запись, созданную каталогом, каталог открывает и при следующем входе
+	for attempt := 0; attempt < 2; attempt++ {
+		logged := doJSON(t, handler, http.MethodPost, "/auth/ldap", "", map[string]string{"login": "sidorov", "password": "secret"})
+		if logged.Code != http.StatusOK {
+			t.Fatalf("directory login %d: %d %s", attempt, logged.Code, logged.Body.String())
+		}
+	}
+}
+
 func TestStubKerberosRejectsDisabledHeaderAndToken(t *testing.T) {
 	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
 	disabled := doJSON(t, handler, http.MethodPost, "/auth/kerberos", "", nil)

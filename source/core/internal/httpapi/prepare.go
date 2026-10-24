@@ -46,6 +46,9 @@ func shown_FromCitations(items []citation) []shownDocument {
 func write_FileResponse(responseWriter http.ResponseWriter, fileName, contentType string, body []byte) {
 	responseWriter.Header().Set("Content-Type", contentType)
 	responseWriter.Header().Set("Content-Disposition", build_AttachmentHeader(fileName))
+	// Файл только скачивается: браузер не угадывает тип и не выполняет в нем скрипты
+	responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+	responseWriter.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	responseWriter.WriteHeader(http.StatusOK)
 	_, _ = responseWriter.Write(body)
 }
