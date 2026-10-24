@@ -36,15 +36,15 @@ func (store *LiveStore) Embed_Question(text string) ([]float32, error) {
 	return vectors[0], nil
 }
 
-func (store *LiveStore) Find_ReplyChunks(ctx context.Context, embedding []float32, userID string, accessLevel int) ([]SimilarChunk, []SimilarChunk, error) {
-	visible, err := store.Find_ChunksBySimilarity(ctx, embedding, userID, accessLevel, replyChunkLimit)
+func (store *LiveStore) Find_ReplyChunks(ctx context.Context, embedding []float32, userID string, roleIDs []string, processID string) ([]SimilarChunk, []SimilarChunk, error) {
+	visible, err := store.Find_ChunksBySimilarity(ctx, embedding, userID, roleIDs, processID, replyChunkLimit)
 	if err != nil {
 		return nil, nil, err
 	}
 	if kind, _ := Choose_LiveReplyKind(visible, nil); kind != texts.KindFallback {
 		return visible, nil, nil
 	}
-	closed, err := store.Find_ClosedGlobalChunks(ctx, embedding, accessLevel, replyChunkLimit)
+	closed, err := store.Find_ClosedGlobalChunks(ctx, embedding, roleIDs, processID, replyChunkLimit)
 	if err != nil {
 		return nil, nil, err
 	}

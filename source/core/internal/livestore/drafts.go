@@ -13,6 +13,15 @@ import (
 const counterDraft = "draft"
 
 func (store *LiveStore) Save_DraftFile(ctx context.Context, ownerID, fileName string, body []byte) (string, error) {
+	return store.insert_DraftFile(ctx, ownerID, "", fileName, body)
+}
+
+func (store *LiveStore) Save_SessionDraftFile(ctx context.Context, ownerID, sessionID, fileName string, body []byte) (string, error) {
+	return store.insert_DraftFile(ctx, ownerID, sessionID, fileName, body)
+}
+
+// Пустой sessionID остается NULL: бланк фазы 9 не привязан к сессии.
+func (store *LiveStore) insert_DraftFile(ctx context.Context, ownerID, sessionID, fileName string, body []byte) (string, error) {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -24,9 +33,9 @@ func (store *LiveStore) Save_DraftFile(ctx context.Context, ownerID, fileName st
 	}
 	draftID := "draft-" + strconv.Itoa(number)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO draft_files (draft_id, owner_user_id, file_name, content_type, body)
-		VALUES ($1, $2, $3, $4, $5)`,
-		draftID, ownerID, fileName, texts.DocxContentType, body)
+		INSERT INTO draft_files (draft_id, owner_user_id, file_name, content_type, body, session_id)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))`,
+		draftID, ownerID, fileName, texts.DocxContentType, body, sessionID)
 	if err != nil {
 		return "", err
 	}

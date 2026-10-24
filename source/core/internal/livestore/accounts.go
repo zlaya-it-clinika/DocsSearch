@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/texts"
 )
 
@@ -20,13 +21,15 @@ import (
 // одновременно не стали администраторами
 const accountsAdvisoryLock = 73100001
 
-// Поля, которые администратор меняет у учётной записи. nil - поле не трогаем
+// Поля, которые администратор меняет у учётной записи. nil - поле не трогаем.
+// RoleIDs заменяет набор ролей. Без него смена уровня или ожидания ставит одну старую роль
 type AccountPatch struct {
 	DisplayName *string
 	Login       *string
 	Password    *string
 	AccessLevel *int
 	Pending     *bool
+	RoleIDs     *[]string
 }
 
 const accountColumns = `user_id, login, display_name, access_level, pending, created_at`
@@ -108,11 +111,17 @@ func (store *LiveStore) Find_ProfileByToken(ctx context.Context, token string) (
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrUnauthorized
 	}
-	return account, err
+	if err != nil {
+		return Account{}, err
+	}
+	if err := store.attach_Grants(ctx, &account); err != nil {
+		return Account{}, err
+	}
+	return account, nil
 }
 
 func (store *LiveStore) List_Accounts(ctx context.Context, token string) ([]Account, error) {
-	if _, err := store.require_Admin(ctx, token); err != nil {
+	if _, err := store.require_Permission(ctx, token, texts.PermissionUsersManage); err != nil {
 		return nil, err
 	}
 	rows, err := store.pool.Query(ctx, `SELECT `+accountColumns+` FROM users ORDER BY created_at, user_id`)
@@ -126,13 +135,16 @@ func (store *LiveStore) List_Accounts(ctx context.Context, token string) ([]Acco
 		if err != nil {
 			return nil, err
 		}
+		if err := store.attach_Grants(ctx, &account); err != nil {
+			return nil, err
+		}
 		accounts = append(accounts, account)
 	}
 	return accounts, rows.Err()
 }
 
 func (store *LiveStore) Create_Account(ctx context.Context, token, loginName, password, displayName string, accessLevel int, pending bool) (Account, error) {
-	if _, err := store.require_Admin(ctx, token); err != nil {
+	if _, err := store.require_Permission(ctx, token, texts.PermissionUsersManage); err != nil {
 		return Account{}, err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -140,20 +152,29 @@ func (store *LiveStore) Create_Account(ctx context.Context, token, loginName, pa
 		return Account{}, err
 	}
 	var account Account
-	err = store.run_AccountsTransaction(ctx, func(tx pgx.Tx, _ int) error {
+	err = store.run_AccountsTransaction(ctx, func(tx pgx.Tx, usersBefore int) error {
 		var insertError error
 		account, insertError = insert_Account(ctx, tx, loginName, string(hash), displayName, accessLevel, pending)
-		return insertError
+		if insertError != nil {
+			return insertError
+		}
+		return store.assign_NewAccountRole(ctx, tx, account.UserID, usersBefore, accessLevel, pending)
 	})
-	return account, err
-}
-
-func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string, patch AccountPatch) (Account, error) {
-	actor, err := store.require_Admin(ctx, token)
 	if err != nil {
 		return Account{}, err
 	}
-	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil {
+	if err := store.attach_Grants(ctx, &account); err != nil {
+		return Account{}, err
+	}
+	return account, nil
+}
+
+func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string, patch AccountPatch) (Account, error) {
+	actor, err := store.require_Permission(ctx, token, texts.PermissionUsersManage)
+	if err != nil {
+		return Account{}, err
+	}
+	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil && patch.RoleIDs == nil {
 		return Account{}, ErrNotFound
 	}
 	account, err := store.find_AccountByID(ctx, userID)
@@ -164,6 +185,8 @@ func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string,
 	if actor.UserID == account.UserID && check_RoleChanges(account, patch) {
 		return Account{}, ErrAccessDenied
 	}
+	levelChanges := patch.AccessLevel != nil && *patch.AccessLevel != account.AccessLevel
+	pendingChanges := patch.Pending != nil && *patch.Pending != account.Pending
 	if patch.DisplayName != nil {
 		account.DisplayName = strings.TrimSpace(*patch.DisplayName)
 	}
@@ -183,7 +206,12 @@ func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string,
 	if patch.Pending != nil {
 		account.Pending = *patch.Pending
 	}
-	_, err = store.pool.Exec(ctx, `
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		UPDATE users SET display_name = $2, login = $3, access_level = $4, pending = $5 WHERE user_id = $1`,
 		account.UserID, account.DisplayName, account.Login, account.AccessLevel, account.Pending)
 	if is_UniqueViolation(err) {
@@ -197,14 +225,36 @@ func (store *LiveStore) Patch_Account(ctx context.Context, token, userID string,
 		if err != nil {
 			return Account{}, err
 		}
-		if _, err := store.pool.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE user_id = $1`, account.UserID, string(hash)); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE user_id = $1`, account.UserID, string(hash)); err != nil {
 			return Account{}, err
 		}
 	}
-	return account, nil
+	if patch.RoleIDs != nil || levelChanges || pendingChanges {
+		next := []string{auth.RoleID_ForNewAccount(1, account.AccessLevel, account.Pending)}
+		if patch.RoleIDs != nil {
+			next = *patch.RoleIDs
+		}
+		if err := store.replace_UserRoles(ctx, tx, actor.UserID, account.UserID, next); err != nil {
+			return Account{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Account{}, err
+	}
+	updated, err := store.find_AccountByID(ctx, account.UserID)
+	if err != nil {
+		return Account{}, err
+	}
+	if err := store.attach_Grants(ctx, &updated); err != nil {
+		return Account{}, err
+	}
+	return updated, nil
 }
 
 func check_RoleChanges(account Account, patch AccountPatch) bool {
+	if patch.RoleIDs != nil {
+		return true
+	}
 	if patch.AccessLevel != nil && *patch.AccessLevel != account.AccessLevel {
 		return true
 	}
@@ -212,14 +262,7 @@ func check_RoleChanges(account Account, patch AccountPatch) bool {
 }
 
 func (store *LiveStore) require_Admin(ctx context.Context, token string) (Account, error) {
-	account, err := store.Find_AccountByToken(ctx, token)
-	if err != nil {
-		return Account{}, err
-	}
-	if account.AccessLevel < texts.SeedAdminAccessLevel {
-		return Account{}, ErrAccessDenied
-	}
-	return account, nil
+	return store.require_Permission(ctx, token, texts.PermissionUsersManage)
 }
 
 func (store *LiveStore) find_AccountByID(ctx context.Context, userID string) (Account, error) {

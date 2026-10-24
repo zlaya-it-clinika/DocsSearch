@@ -46,7 +46,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 	insertChunk(t, ctx, store, ownID, texts.ScopePersonal, ownerID, "свой личный", near)
 	insertChunk(t, ctx, store, foreignID, texts.ScopePersonal, foreignOwnerID, "чужой личный", near)
 
-	visible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, 1, 5)
+	visible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, []string{texts.RoleIDUser}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 		t.Fatalf("employee visible %+v", visible)
 	}
 
-	otherVisible, err := store.Find_ChunksBySimilarity(ctx, near, foreignOwnerID, 1, 5)
+	otherVisible, err := store.Find_ChunksBySimilarity(ctx, near, foreignOwnerID, []string{texts.RoleIDUser}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 		t.Fatalf("other user visible %+v", otherVisible)
 	}
 
-	adminVisible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, 2, 5)
+	adminVisible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, []string{texts.RoleIDAdmin}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 		t.Fatalf("raised level %+v", adminVisible)
 	}
 
-	closed, err := store.Find_ClosedGlobalChunks(ctx, near, 1, 5)
+	closed, err := store.Find_ClosedGlobalChunks(ctx, near, []string{texts.RoleIDUser}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 		t.Fatalf("closed global %+v", closed)
 	}
 
-	replyVisible, replyClosed, err := store.Find_ReplyChunks(ctx, near, ownerID, 1)
+	replyVisible, replyClosed, err := store.Find_ReplyChunks(ctx, near, ownerID, []string{texts.RoleIDUser}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestFind_ChunksBySimilarityFiltersScopeAndLevel(t *testing.T) {
 	if chunkCount != 0 {
 		t.Fatalf("chunks left %d", chunkCount)
 	}
-	closed, err = store.Find_ClosedGlobalChunks(ctx, near, 1, 5)
+	closed, err = store.Find_ClosedGlobalChunks(ctx, near, []string{texts.RoleIDUser}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestFind_ContactChunkStaysOutOfAnswerSearch(t *testing.T) {
 	insertChunk(t, ctx, store, contactID, texts.ScopeGlobal, "", contactBody, near)
 	insertChunk(t, ctx, store, foreignID, texts.ScopePersonal, foreignOwnerID, "чужой телефон", near)
 
-	visible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, 1, 5)
+	visible, err := store.Find_ChunksBySimilarity(ctx, near, ownerID, []string{texts.RoleIDUser}, "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +152,14 @@ func TestFind_ContactChunkStaysOutOfAnswerSearch(t *testing.T) {
 		t.Fatalf("answer search %+v", visible)
 	}
 
-	contact, found, err := store.Find_ContactChunk(ctx, near, ownerID, 1)
+	contact, found, err := store.Find_ContactChunk(ctx, near, ownerID, []string{texts.RoleIDUser}, "")
 	if err != nil || !found || contact.DocumentID != contactID || contact.Content != contactBody {
 		t.Fatalf("contact %+v found %v err %v", contact, found, err)
 	}
 
 	far := make([]float32, 768)
 	far[4] = 1
-	_, weakFound, err := store.Find_ContactChunk(ctx, far, ownerID, 1)
+	_, weakFound, err := store.Find_ContactChunk(ctx, far, ownerID, []string{texts.RoleIDUser}, "")
 	if err != nil || weakFound {
 		t.Fatalf("weak contact found %v err %v", weakFound, err)
 	}
@@ -167,12 +167,20 @@ func TestFind_ContactChunkStaysOutOfAnswerSearch(t *testing.T) {
 
 func insertTitledDocument(t *testing.T, ctx context.Context, store *LiveStore, documentID, title, scope, ownerID string, accessLevel int) {
 	t.Helper()
+	visibleToAll := scope == texts.ScopeGlobal && accessLevel < texts.SeedAdminAccessLevel
 	_, err := store.pool.Exec(ctx, `
-		INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, file_name, content_type, body)
-		VALUES ($1, $2, '1.0', $3, $4, $5, 'probe.txt', 'text/plain', $6)`,
-		documentID, title, accessLevel, scope, ownerID, []byte("probe"))
+		INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, file_name, content_type, body, visible_to_all)
+		VALUES ($1, $2, '1.0', $3, $4, $5, 'probe.txt', 'text/plain', $6, $7)`,
+		documentID, title, accessLevel, scope, ownerID, []byte("probe"), visibleToAll)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if scope == texts.ScopeGlobal && !visibleToAll {
+		for _, roleID := range []string{texts.RoleIDAdmin, texts.RoleIDChief} {
+			if _, err := store.pool.Exec(ctx, `INSERT INTO document_roles (document_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, documentID, roleID); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 
@@ -211,4 +219,49 @@ func hasAnyContents(rows []SimilarChunk, contents ...string) bool {
 		}
 	}
 	return false
+}
+
+func TestFind_ChunksBySimilarityFiltersProcess(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is empty")
+	}
+	store, err := Open_LiveStore(databaseURL, 768, nil, auth.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+
+	ctx := context.Background()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	recordsID := "doc-proc-records-" + suffix
+	staffID := "doc-proc-staff-" + suffix
+	insertTitledDocument(t, ctx, store, recordsID, "регламент документооборота", texts.ScopeGlobal, "", 1)
+	insertTitledDocument(t, ctx, store, staffID, "регламент кадров", texts.ScopeGlobal, "", 1)
+	if _, err := store.pool.Exec(ctx, `UPDATE documents SET process_id = $2 WHERE document_id = $1`, staffID, "process-hr"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = store.pool.Exec(context.Background(), `DELETE FROM documents WHERE document_id IN ($1, $2)`, recordsID, staffID)
+	})
+
+	near := make([]float32, 768)
+	near[1+int(time.Now().UnixNano()%700)] = 1
+	insertChunk(t, ctx, store, recordsID, texts.ScopeGlobal, "", "текст документооборота", near)
+	insertChunk(t, ctx, store, staffID, texts.ScopeGlobal, "", "текст кадров", near)
+
+	staffOnly, err := store.Find_ChunksBySimilarity(ctx, near, "user-1", []string{texts.RoleIDUser}, "process-hr", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasAllContents(staffOnly, "текст кадров") || hasAnyContents(staffOnly, "текст документооборота") {
+		t.Fatalf("process filter %+v", staffOnly)
+	}
+	all, err := store.Find_ChunksBySimilarity(ctx, near, "user-1", []string{texts.RoleIDUser}, "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasAllContents(all, "текст кадров", "текст документооборота") {
+		t.Fatalf("all processes %+v", all)
+	}
 }

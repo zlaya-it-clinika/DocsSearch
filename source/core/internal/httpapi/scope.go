@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/texts"
 )
 
@@ -18,10 +19,10 @@ func read_ListScope(raw string) (string, bool) {
 	}
 }
 
-func read_UploadScope(raw string, accessLevel int) (string, bool) {
+func read_UploadScope(raw string, canUploadGlobal bool) (string, bool) {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if raw == "" {
-		if accessLevel >= adminAccessLevel {
+		if canUploadGlobal {
 			return texts.ScopeGlobal, true
 		}
 		return texts.ScopePersonal, true
@@ -32,45 +33,44 @@ func read_UploadScope(raw string, accessLevel int) (string, bool) {
 	return "", false
 }
 
-func check_CanUploadGlobal(accessLevel int) bool {
-	return accessLevel >= adminAccessLevel
-}
-
-func check_CanDeleteDocument(viewerID string, viewerLevel int, scope, ownerID string) bool {
+func check_CanDeleteDocument(viewerID string, permissions []string, scope, ownerID string) bool {
 	if scope == texts.ScopePersonal {
-		return viewerID == ownerID || viewerLevel >= adminAccessLevel
+		return viewerID == ownerID || auth.Has_Permission(permissions, texts.PermissionPersonalViewAll)
 	}
-	return viewerLevel >= adminAccessLevel
+	return auth.Has_Permission(permissions, texts.PermissionGlobalManage)
 }
 
-func document_MatchesList(scopeFilter, documentScope, ownerID, viewerID string, documentLevel, viewerLevel int) bool {
+func document_MatchesList(scopeFilter, documentScope, ownerID, viewerID string, visibleToAll bool, documentRoleIDs, viewerRoleIDs []string) bool {
 	switch scopeFilter {
 	case texts.ScopeAll:
-		return true
+		if documentScope == texts.ScopePersonal {
+			return true
+		}
+		return auth.Sees_GlobalDocument(viewerRoleIDs, visibleToAll, documentRoleIDs)
 	case texts.ScopeGlobal:
-		return documentScope == texts.ScopeGlobal && documentLevel <= viewerLevel
+		return documentScope == texts.ScopeGlobal && auth.Sees_GlobalDocument(viewerRoleIDs, visibleToAll, documentRoleIDs)
 	case texts.ScopePersonal:
 		return documentScope == texts.ScopePersonal && ownerID == viewerID
 	default:
 		if documentScope == texts.ScopePersonal {
 			return ownerID == viewerID
 		}
-		return documentScope == texts.ScopeGlobal && documentLevel <= viewerLevel
+		return documentScope == texts.ScopeGlobal && auth.Sees_GlobalDocument(viewerRoleIDs, visibleToAll, documentRoleIDs)
 	}
 }
 
 // Чужой личный документ для сотрудника выглядит как отсутствующий.
-func document_ReadStatus(viewerID string, viewerLevel int, scope, ownerID string, documentLevel int) int {
+func document_ReadStatus(viewerID string, permissions, viewerRoleIDs []string, scope, ownerID string, visibleToAll bool, documentRoleIDs []string) int {
 	if scope == texts.ScopePersonal {
-		if viewerID == ownerID || viewerLevel >= adminAccessLevel {
+		if viewerID == ownerID || auth.Has_Permission(permissions, texts.PermissionPersonalViewAll) {
 			return http.StatusOK
 		}
 		return http.StatusNotFound
 	}
-	if viewerLevel < documentLevel {
-		return http.StatusForbidden
+	if auth.Sees_GlobalDocument(viewerRoleIDs, visibleToAll, documentRoleIDs) {
+		return http.StatusOK
 	}
-	return http.StatusOK
+	return http.StatusForbidden
 }
 
 func read_AccessLevel(raw string, fallback int) (int, bool) {
@@ -83,4 +83,34 @@ func read_AccessLevel(raw string, fallback int) (int, bool) {
 		return 0, false
 	}
 	return parsed, true
+}
+
+func read_FormRoleIDs(values []string) []string {
+	var raw []string
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				raw = append(raw, part)
+			}
+		}
+	}
+	return auth.Unique_IDs(raw)
+}
+
+func read_UploadAudience(roleValues []string, accessLevelRaw string, userLevel int, personal bool) (int, bool, []string, bool) {
+	if personal {
+		return userLevel, false, []string{}, true
+	}
+	roleIDs := read_FormRoleIDs(roleValues)
+	if len(roleIDs) > 0 {
+		audience := auth.Audience_FromRoleIDs(roleIDs)
+		return audience.AccessLevel, audience.VisibleToAll, audience.RoleIDs, true
+	}
+	parsed, levelOK := read_AccessLevel(accessLevelRaw, texts.SeedDocumentAccessOpen)
+	if !levelOK {
+		return 0, false, nil, false
+	}
+	audience := auth.Audience_FromLevel(parsed)
+	return audience.AccessLevel, audience.VisibleToAll, audience.RoleIDs, true
 }

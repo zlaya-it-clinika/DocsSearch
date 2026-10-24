@@ -52,37 +52,47 @@ type ldapToggleResponse struct {
 }
 
 type ldapServerRequest struct {
-	Label                string `json:"label"`
-	Host                 string `json:"host"`
-	Port                 *int   `json:"port"`
-	AttributeForMail     string `json:"attributeForMail"`
-	AttributeForUsername string `json:"attributeForUsername"`
-	AppDN                string `json:"appDn"`
-	AppPassword          string `json:"appDnPassword"`
-	SearchBase           string `json:"searchBase"`
-	SearchFilters        string `json:"searchFilters"`
-	UseTLS               *bool  `json:"useTls"`
-	CertificatePath      string `json:"certificatePath"`
-	ValidateCert         *bool  `json:"validateCert"`
-	Ciphers              string `json:"ciphers"`
+	Label                 string `json:"label"`
+	Host                  string `json:"host"`
+	Port                  *int   `json:"port"`
+	AttributeForMail      string `json:"attributeForMail"`
+	AttributeForUsername  string `json:"attributeForUsername"`
+	AppDN                 string `json:"appDn"`
+	AppPassword           string `json:"appDnPassword"`
+	SearchBase            string `json:"searchBase"`
+	SearchFilters         string `json:"searchFilters"`
+	UseTLS                *bool  `json:"useTls"`
+	CertificatePath       string `json:"certificatePath"`
+	ValidateCert          *bool  `json:"validateCert"`
+	Ciphers               string `json:"ciphers"`
+	EnableGroupManagement *bool  `json:"enableGroupManagement"`
+	GroupAttribute        string `json:"groupAttribute"`
+	EnableKerberos        *bool  `json:"enableKerberos"`
+	KeytabPath            string `json:"keytabPath"`
+	ServicePrincipal      string `json:"servicePrincipal"`
 }
 
 // Пароль служебной учётной записи наружу не отдаём, только признак, что он задан
 type ldapServerResponse struct {
-	Label                string `json:"label"`
-	Host                 string `json:"host"`
-	Port                 int    `json:"port"`
-	AttributeForMail     string `json:"attributeForMail"`
-	AttributeForUsername string `json:"attributeForUsername"`
-	AppDN                string `json:"appDn"`
-	AppPassword          string `json:"appDnPassword"`
-	AppPasswordSet       bool   `json:"appDnPasswordSet"`
-	SearchBase           string `json:"searchBase"`
-	SearchFilters        string `json:"searchFilters"`
-	UseTLS               bool   `json:"useTls"`
-	CertificatePath      string `json:"certificatePath"`
-	ValidateCert         bool   `json:"validateCert"`
-	Ciphers              string `json:"ciphers"`
+	Label                 string `json:"label"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	AttributeForMail      string `json:"attributeForMail"`
+	AttributeForUsername  string `json:"attributeForUsername"`
+	AppDN                 string `json:"appDn"`
+	AppPassword           string `json:"appDnPassword"`
+	AppPasswordSet        bool   `json:"appDnPasswordSet"`
+	SearchBase            string `json:"searchBase"`
+	SearchFilters         string `json:"searchFilters"`
+	UseTLS                bool   `json:"useTls"`
+	CertificatePath       string `json:"certificatePath"`
+	ValidateCert          bool   `json:"validateCert"`
+	Ciphers               string `json:"ciphers"`
+	EnableGroupManagement bool   `json:"enableGroupManagement"`
+	GroupAttribute        string `json:"groupAttribute"`
+	EnableKerberos        bool   `json:"enableKerberos"`
+	KeytabPath            string `json:"keytabPath"`
+	ServicePrincipal      string `json:"servicePrincipal"`
 }
 
 type createUserRequest struct {
@@ -95,12 +105,13 @@ type createUserRequest struct {
 }
 
 type patchUserRequest struct {
-	DisplayName *string `json:"displayName"`
-	Login       *string `json:"login"`
-	Email       *string `json:"email"`
-	Password    *string `json:"password"`
-	AccessLevel *int    `json:"accessLevel"`
-	Role        *string `json:"role"`
+	DisplayName *string  `json:"displayName"`
+	Login       *string  `json:"login"`
+	Email       *string  `json:"email"`
+	Password    *string  `json:"password"`
+	AccessLevel *int     `json:"accessLevel"`
+	Role        *string  `json:"role"`
+	RoleIDs     []string `json:"roleIds"`
 }
 
 // Готовая учётная запись для создания: логин, пароль, имя, уровень и признак ожидания
@@ -214,25 +225,43 @@ func apply_LdapServerRequest(current auth.LdapSettings, body ldapServerRequest) 
 	if !auth.Check_CiphersKnown(updated.Ciphers) {
 		return current, false
 	}
+	if body.EnableGroupManagement != nil {
+		updated.EnableGroupManagement = *body.EnableGroupManagement
+	}
+	if groupAttribute := strings.TrimSpace(body.GroupAttribute); groupAttribute != "" {
+		updated.GroupAttribute = groupAttribute
+	}
+	if body.EnableKerberos != nil {
+		updated.EnableKerberos = *body.EnableKerberos
+	}
+	if body.KeytabPath != "" || body.ServicePrincipal != "" {
+		updated.KeytabPath = strings.TrimSpace(body.KeytabPath)
+		updated.ServicePrincipal = strings.TrimSpace(body.ServicePrincipal)
+	}
 	return updated, true
 }
 
 func build_LdapServerResponse(settings auth.LdapSettings) ldapServerResponse {
 	return ldapServerResponse{
-		Label:                settings.Label,
-		Host:                 settings.Host,
-		Port:                 settings.Port,
-		AttributeForMail:     settings.AttributeForMail,
-		AttributeForUsername: settings.AttributeForUsername,
-		AppDN:                settings.AppDN,
-		AppPassword:          "",
-		AppPasswordSet:       settings.AppPassword != "",
-		SearchBase:           settings.SearchBase,
-		SearchFilters:        settings.SearchFilters,
-		UseTLS:               settings.UseTLS,
-		CertificatePath:      settings.CertificatePath,
-		ValidateCert:         settings.ValidateCert,
-		Ciphers:              settings.Ciphers,
+		Label:                 settings.Label,
+		Host:                  settings.Host,
+		Port:                  settings.Port,
+		AttributeForMail:      settings.AttributeForMail,
+		AttributeForUsername:  settings.AttributeForUsername,
+		AppDN:                 settings.AppDN,
+		AppPassword:           "",
+		AppPasswordSet:        settings.AppPassword != "",
+		SearchBase:            settings.SearchBase,
+		SearchFilters:         settings.SearchFilters,
+		UseTLS:                settings.UseTLS,
+		CertificatePath:       settings.CertificatePath,
+		ValidateCert:          settings.ValidateCert,
+		Ciphers:               settings.Ciphers,
+		EnableGroupManagement: settings.EnableGroupManagement,
+		GroupAttribute:        settings.GroupAttribute,
+		EnableKerberos:        settings.EnableKerberos,
+		KeytabPath:            settings.KeytabPath,
+		ServicePrincipal:      settings.ServicePrincipal,
 	}
 }
 
@@ -281,7 +310,13 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
 		return livestore.AccountPatch{}, false
 	}
-	patch := livestore.AccountPatch{AccessLevel: body.AccessLevel}
+	patch := livestore.AccountPatch{}
+	if body.RoleIDs == nil {
+		patch.AccessLevel = body.AccessLevel
+	} else {
+		roleIDs := auth.Unique_IDs(body.RoleIDs)
+		patch.RoleIDs = &roleIDs
+	}
 	if body.DisplayName != nil {
 		displayName := strings.TrimSpace(*body.DisplayName)
 		if displayName == "" {
@@ -306,7 +341,7 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 		}
 		patch.Password = body.Password
 	}
-	if body.Role != nil {
+	if body.Role != nil && body.RoleIDs == nil {
 		role := auth.Normalize_Role(*body.Role)
 		if !auth.Check_IsKnownRole(role) {
 			return livestore.AccountPatch{}, false
@@ -317,7 +352,7 @@ func read_PatchUserRequest(responseWriter http.ResponseWriter, request *http.Req
 		}
 		patch.Pending = &pending
 	}
-	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil {
+	if patch.DisplayName == nil && patch.Login == nil && patch.Password == nil && patch.AccessLevel == nil && patch.Pending == nil && patch.RoleIDs == nil {
 		return livestore.AccountPatch{}, false
 	}
 	return patch, true

@@ -8,20 +8,24 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"docssearch/core/internal/auth"
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/texts"
 )
 
 type UploadInput struct {
-	FileName    string
-	ContentType string
-	Body        []byte
-	Title       string
-	Edition     string
-	AccessLevel int
-	Scope       string
-	OwnerID     string
+	FileName     string
+	ContentType  string
+	Body         []byte
+	Title        string
+	Edition      string
+	AccessLevel  int
+	Scope        string
+	OwnerID      string
+	ProcessID    string
+	VisibleToAll bool
+	RoleIDs      []string
 }
 
 type UploadResult struct {
@@ -68,23 +72,34 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 		}
 		documentID = "doc-" + strconv.Itoa(number)
 		_, err = tx.Exec(ctx, `
-			INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, uploaded_at, file_name, content_type, body)
-			VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9)`,
-			documentID, input.Title, input.Edition, input.AccessLevel, input.Scope, input.OwnerID, input.FileName, input.ContentType, input.Body)
+			INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, process_id, uploaded_at, file_name, content_type, body, visible_to_all)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9, $10, $11)`,
+			documentID, input.Title, input.Edition, input.AccessLevel, input.Scope, input.OwnerID, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll)
 	} else if err != nil {
 		return UploadResult{}, err
 	} else {
 		_, err = tx.Exec(ctx, `
 			UPDATE documents
-			SET edition = $2, access_level = $3, file_name = $4, content_type = $5, body = $6, uploaded_at = now()
+			SET edition = $2, access_level = $3, process_id = $4, file_name = $5, content_type = $6, body = $7, uploaded_at = now(), visible_to_all = $8
 			WHERE document_id = $1`,
-			documentID, input.Edition, input.AccessLevel, input.FileName, input.ContentType, input.Body)
+			documentID, input.Edition, input.AccessLevel, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll)
 	}
 	if err != nil {
 		if is_UniqueViolation(err) {
 			return UploadResult{}, err
 		}
 		return UploadResult{}, err
+	}
+	if err := check_RoleIDs(ctx, tx, input.RoleIDs); err != nil {
+		return UploadResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM document_roles WHERE document_id = $1`, documentID); err != nil {
+		return UploadResult{}, err
+	}
+	for _, roleID := range input.RoleIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO document_roles (document_id, role_id) VALUES ($1, $2)`, documentID, roleID); err != nil {
+			return UploadResult{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
 		return UploadResult{}, err
@@ -102,6 +117,13 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 		return UploadResult{}, err
 	}
 	return UploadResult{DocumentID: documentID, Edition: input.Edition, Scope: input.Scope}, nil
+}
+
+func upload_ProcessID(processID string) string {
+	if strings.TrimSpace(processID) == "" {
+		return texts.ProcessDocuments
+	}
+	return processID
 }
 
 func (store *LiveStore) embed_Texts(contents []string) ([][]float32, error) {
@@ -123,28 +145,33 @@ func (store *LiveStore) embed_Texts(contents []string) ([][]float32, error) {
 	return vectors, nil
 }
 
-func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeFilter string) ([]DocumentLine, error) {
+func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeFilter, processFilter string) ([]DocumentLine, error) {
 	account, err := store.Find_AccountByToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	if scopeFilter == texts.ScopeAll && account.AccessLevel < texts.SeedAdminAccessLevel {
+	if scopeFilter == texts.ScopeAll && !account.Has(texts.PermissionPersonalViewAll) {
 		return nil, ErrAccessDenied
 	}
+	visibleSQL := global_VisibleSQL("$3")
 	rows, err := store.pool.Query(ctx, `
 		SELECT d.document_id, d.title, d.edition, d.access_level, d.scope, d.owner_id,
-			COALESCE(u.display_name, ''), d.uploaded_at
+			COALESCE(u.display_name, ''), d.uploaded_at, d.process_id, d.visible_to_all,
+			COALESCE((SELECT array_agg(dr.role_id ORDER BY dr.role_id) FROM document_roles dr WHERE dr.document_id = d.document_id), '{}')
 		FROM documents d
 		LEFT JOIN users u ON u.user_id = d.owner_id AND d.owner_id <> ''
 		WHERE
-			($2 = 'all')
-			OR ($2 = 'global' AND d.scope = 'global' AND d.access_level <= $3)
-			OR ($2 = 'personal' AND d.scope = 'personal' AND d.owner_id = $1)
-			OR ($2 = '' AND (
-				(d.scope = 'global' AND d.access_level <= $3)
-				OR (d.scope = 'personal' AND d.owner_id = $1)
-			))
-		ORDER BY d.document_id`, account.UserID, scopeFilter, account.AccessLevel)
+			(
+				($2 = 'all' AND (d.scope = 'personal' OR (d.scope = 'global' AND `+visibleSQL+`)))
+				OR ($2 = 'global' AND d.scope = 'global' AND `+visibleSQL+`)
+				OR ($2 = 'personal' AND d.scope = 'personal' AND d.owner_id = $1)
+				OR ($2 = '' AND (
+					(d.scope = 'global' AND `+visibleSQL+`)
+					OR (d.scope = 'personal' AND d.owner_id = $1)
+				))
+			)
+			AND ($4 = '' OR d.process_id = $4)
+		ORDER BY d.document_id`, account.UserID, scopeFilter, role_Filter(account.RoleIDs), processFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +179,11 @@ func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeF
 	lines := []DocumentLine{}
 	for rows.Next() {
 		var line DocumentLine
-		if err := rows.Scan(&line.DocumentID, &line.Title, &line.Edition, &line.AccessLevel, &line.Scope, &line.OwnerID, &line.OwnerName, &line.UploadedAt); err != nil {
+		if err := rows.Scan(&line.DocumentID, &line.Title, &line.Edition, &line.AccessLevel, &line.Scope, &line.OwnerID, &line.OwnerName, &line.UploadedAt, &line.ProcessID, &line.VisibleToAll, &line.RoleIDs); err != nil {
 			return nil, err
+		}
+		if line.RoleIDs == nil {
+			line.RoleIDs = []string{}
 		}
 		lines = append(lines, line)
 	}
@@ -166,19 +196,22 @@ func (store *LiveStore) Read_DocumentFile(ctx context.Context, token, documentID
 		return DocumentFile{}, err
 	}
 	var file DocumentFile
-	var accessLevel int
 	var scope string
 	var ownerID string
+	var visibleToAll bool
+	var documentRoleIDs []string
 	err = store.pool.QueryRow(ctx, `
-		SELECT access_level, scope, owner_id, file_name, content_type, body
-		FROM documents WHERE document_id = $1`, documentID).Scan(&accessLevel, &scope, &ownerID, &file.FileName, &file.ContentType, &file.Body)
+		SELECT scope, owner_id, visible_to_all,
+			COALESCE((SELECT array_agg(role_id) FROM document_roles WHERE document_id = $1), '{}'),
+			file_name, content_type, body
+		FROM documents WHERE document_id = $1`, documentID).Scan(&scope, &ownerID, &visibleToAll, &documentRoleIDs, &file.FileName, &file.ContentType, &file.Body)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DocumentFile{}, ErrNotFound
 	}
 	if err != nil {
 		return DocumentFile{}, err
 	}
-	if status := document_ReadError(account, scope, ownerID, accessLevel); status != nil {
+	if status := document_ReadError(account, scope, ownerID, visibleToAll, documentRoleIDs); status != nil {
 		return DocumentFile{}, status
 	}
 	return file, nil
@@ -189,18 +222,21 @@ func (store *LiveStore) Delete_Document(ctx context.Context, token, documentID s
 	if err != nil {
 		return err
 	}
-	var accessLevel int
 	var scope string
 	var ownerID string
+	var visibleToAll bool
+	var documentRoleIDs []string
 	err = store.pool.QueryRow(ctx, `
-		SELECT access_level, scope, owner_id FROM documents WHERE document_id = $1`, documentID).Scan(&accessLevel, &scope, &ownerID)
+		SELECT scope, owner_id, visible_to_all,
+			COALESCE((SELECT array_agg(role_id) FROM document_roles WHERE document_id = $1), '{}')
+		FROM documents WHERE document_id = $1`, documentID).Scan(&scope, &ownerID, &visibleToAll, &documentRoleIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if status := document_ReadError(account, scope, ownerID, accessLevel); status != nil {
+	if status := document_ReadError(account, scope, ownerID, visibleToAll, documentRoleIDs); status != nil {
 		return status
 	}
 	if !document_CanDelete(account, scope, ownerID) {
@@ -210,62 +246,76 @@ func (store *LiveStore) Delete_Document(ctx context.Context, token, documentID s
 	return err
 }
 
-func document_ReadError(account Account, scope, ownerID string, accessLevel int) error {
+func document_ReadError(account Account, scope, ownerID string, visibleToAll bool, documentRoleIDs []string) error {
 	if scope == texts.ScopePersonal {
-		if account.UserID == ownerID || account.AccessLevel >= texts.SeedAdminAccessLevel {
+		if account.UserID == ownerID || account.Has(texts.PermissionPersonalViewAll) {
 			return nil
 		}
 		return ErrNotFound
 	}
-	if account.AccessLevel < accessLevel {
-		return ErrAccessDenied
+	if auth.Sees_GlobalDocument(account.RoleIDs, visibleToAll, documentRoleIDs) {
+		return nil
 	}
-	return nil
+	return ErrAccessDenied
 }
 
 func document_CanDelete(account Account, scope, ownerID string) bool {
 	if scope == texts.ScopePersonal {
-		return account.UserID == ownerID || account.AccessLevel >= texts.SeedAdminAccessLevel
+		return account.UserID == ownerID || account.Has(texts.PermissionPersonalViewAll)
 	}
-	return account.AccessLevel >= texts.SeedAdminAccessLevel
+	return account.Has(texts.PermissionGlobalManage)
 }
 
-func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding []float32, userID string, accessLevel, limit int) ([]SimilarChunk, error) {
+func global_VisibleSQL(roleParam string) string {
+	return `(d.visible_to_all OR EXISTS (
+		SELECT 1 FROM document_roles dr
+		WHERE dr.document_id = d.document_id AND dr.role_id = ANY(` + roleParam + `::text[])))`
+}
+
+// Чужой личный документ не попадает в поиск, даже при documents.personal.view_all: этот флаг открывает список и удаление
+func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding []float32, userID string, roleIDs []string, processID string, limit int) ([]SimilarChunk, error) {
 	return store.query_Chunks(ctx, embedding, limit, `
 		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope,
 			c.embedding <=> $1::vector AS distance
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
-		WHERE ((d.scope = 'global' AND d.access_level <= $2)
+		WHERE ((d.scope = 'global' AND `+global_VisibleSQL("$2")+`)
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND NOT `+contacts.Title_SQLCondition()+`
+			AND ($4 = '' OR d.process_id = $4)
 		ORDER BY c.embedding <=> $1::vector
-		LIMIT $4`, accessLevel, userID)
+		LIMIT $5`, role_Filter(roleIDs), userID, processID)
 }
 
-func (store *LiveStore) Find_ClosedGlobalChunks(ctx context.Context, embedding []float32, accessLevel, limit int) ([]SimilarChunk, error) {
+func (store *LiveStore) Find_ClosedGlobalChunks(ctx context.Context, embedding []float32, roleIDs []string, processID string, limit int) ([]SimilarChunk, error) {
 	return store.query_Chunks(ctx, embedding, limit, `
 		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope,
 			c.embedding <=> $1::vector AS distance
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
-		WHERE d.scope = 'global' AND d.access_level > $2
+		WHERE d.scope = 'global' AND NOT d.visible_to_all
+			AND NOT EXISTS (
+				SELECT 1 FROM document_roles dr
+				WHERE dr.document_id = d.document_id AND dr.role_id = ANY($2::text[])
+			)
 			AND NOT `+contacts.Title_SQLCondition()+`
+			AND ($3 = '' OR d.process_id = $3)
 		ORDER BY c.embedding <=> $1::vector
-		LIMIT $3`, accessLevel)
+		LIMIT $4`, role_Filter(roleIDs), processID)
 }
 
-func (store *LiveStore) Find_ContactChunk(ctx context.Context, embedding []float32, userID string, accessLevel int) (SimilarChunk, bool, error) {
+func (store *LiveStore) Find_ContactChunk(ctx context.Context, embedding []float32, userID string, roleIDs []string, processID string) (SimilarChunk, bool, error) {
 	found, err := store.query_Chunks(ctx, embedding, 1, `
 		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope,
 			c.embedding <=> $1::vector AS distance
 		FROM chunks c
 		JOIN documents d ON d.document_id = c.document_id
-		WHERE ((d.scope = 'global' AND d.access_level <= $2)
+		WHERE ((d.scope = 'global' AND `+global_VisibleSQL("$2")+`)
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND `+contacts.Title_SQLCondition()+`
+			AND ($4 = '' OR d.process_id = $4)
 		ORDER BY c.embedding <=> $1::vector
-		LIMIT $4`, accessLevel, userID)
+		LIMIT $5`, role_Filter(roleIDs), userID, processID)
 	if err != nil {
 		return SimilarChunk{}, false, err
 	}

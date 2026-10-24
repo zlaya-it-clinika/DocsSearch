@@ -32,17 +32,46 @@ type TextChunk struct {
 	Content   string
 }
 
-func Extract_DocumentText(fileName string, body []byte) (string, error) {
-	switch strings.ToLower(path.Ext(fileName)) {
-	case ".txt":
+// TextExtractor читает текст одного формата. Новый формат регистрируется отдельно от загрузки.
+type TextExtractor interface {
+	Extract(fileName string, body []byte) (string, error)
+}
+
+type textExtractorFunc func(fileName string, body []byte) (string, error)
+
+func (extract textExtractorFunc) Extract(fileName string, body []byte) (string, error) {
+	return extract(fileName, body)
+}
+
+var textExtractors = map[string]TextExtractor{}
+
+func init() {
+	Register_TextExtractor(".txt", textExtractorFunc(func(fileName string, body []byte) (string, error) {
 		return string(body), nil
-	case ".pdf":
+	}))
+	Register_TextExtractor(".pdf", textExtractorFunc(func(fileName string, body []byte) (string, error) {
 		return extract_PdfText(body)
-	case ".docx":
+	}))
+	Register_TextExtractor(".docx", textExtractorFunc(func(fileName string, body []byte) (string, error) {
 		return extract_DocxText(body)
-	default:
+	}))
+}
+
+func Register_TextExtractor(extension string, extractor TextExtractor) {
+	textExtractors[strings.ToLower(extension)] = extractor
+}
+
+func Supports_DocumentText(fileName string) bool {
+	_, ok := textExtractors[strings.ToLower(path.Ext(fileName))]
+	return ok
+}
+
+func Extract_DocumentText(fileName string, body []byte) (string, error) {
+	extractor, ok := textExtractors[strings.ToLower(path.Ext(fileName))]
+	if !ok {
 		return "", ErrUnsupportedFile
 	}
+	return extractor.Extract(fileName, body)
 }
 
 func extract_PdfText(body []byte) (string, error) {

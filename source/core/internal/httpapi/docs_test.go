@@ -45,6 +45,31 @@ func TestDocsRequiresPasswordFromConfig(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(body, "api-token") || !strings.Contains(body, "/audit") {
 		t.Fatalf("console %d %s", page.Code, body)
 	}
+	for _, path := range []string{
+		"/auth/logout",
+		`GET</span>/sessions</h2>`,
+		"DELETE",
+		"/blanks/order-work-group/file",
+		"/drafts/draft-1/file",
+		"/drafts/check",
+		"/sessions/session-1/attachments",
+		`name="scope"`,
+		"/processes",
+		"/documents/import",
+		`name="process"`,
+		"/permissions",
+		"/roles",
+		"/audit/permissions",
+		`name="roleIds"`,
+		`PATCH</span>/sessions/{sessionId}`,
+		`DELETE</span>/sessions/{sessionId}`,
+		"/auth/kerberos",
+		"ldapGroup",
+	} {
+		if !strings.Contains(body, path) {
+			t.Fatalf("console missing %s", path)
+		}
+	}
 
 	api := doJSON(t, handler, http.MethodPost, "/auth/login", "", map[string]string{
 		"login":    texts.SeedEmployeeLogin,

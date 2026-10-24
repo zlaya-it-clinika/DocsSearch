@@ -2,8 +2,13 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jcmturner/gokrb5/v8/keytab"
 
 	"docssearch/core/internal/auth"
 	"docssearch/core/internal/config"
@@ -199,4 +204,95 @@ func TestStubLdapSettingsHideServicePassword(t *testing.T) {
 	if unreachable.Code != http.StatusBadGateway || !strings.Contains(unreachable.Body.String(), texts.ErrorLdapUnavailable) {
 		t.Fatalf("unreachable ldap %d %s", unreachable.Code, unreachable.Body.String())
 	}
+}
+
+func TestStubLdapGroupAssignsRole(t *testing.T) {
+	t.Cleanup(func() { ldapDirectory = nil })
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	created := decodeJSON[roleResponse](t, doJSON(t, handler, http.MethodPost, "/roles", chiefToken, map[string]any{
+		"title": "Архив", "ldapGroup": "Архив", "permissions": []string{texts.PermissionChatUse},
+	}))
+	if created.LdapGroup != "Архив" {
+		t.Fatalf("role %+v", created)
+	}
+	server := map[string]any{
+		"label": "Active Directory", "host": "127.0.0.1", "attributeForMail": "mail",
+		"attributeForUsername": "sAMAccountName", "searchBase": "DC=corp,DC=local",
+		"ciphers": "ALL", "enableGroupManagement": true, "groupAttribute": "memberOf",
+	}
+	if doJSON(t, handler, http.MethodPost, "/auth/admin/config/ldap/server", chiefToken, server).Code != http.StatusOK {
+		t.Fatal("ldap server")
+	}
+	if doJSON(t, handler, http.MethodPost, "/auth/admin/config/ldap", chiefToken, map[string]bool{"enableLdap": true}).Code != http.StatusOK {
+		t.Fatal("ldap toggle")
+	}
+	ldapDirectory = map[string]ldapDirectoryUser{
+		"ivanov": {
+			password: "secret",
+			identity: auth.LdapIdentity{
+				Email: "ivanov@corp.local", Name: "Иванов",
+				Groups: []string{"CN=Архив,OU=Groups,DC=corp,DC=local"},
+			},
+		},
+	}
+	logged := decodeJSON[loginResponse](t, doJSON(t, handler, http.MethodPost, "/auth/ldap", "", map[string]string{
+		"login": "ivanov", "password": "secret",
+	}))
+	if logged.Token == "" {
+		t.Fatal("ldap login")
+	}
+	profile := decodeJSON[profileResponse](t, doJSON(t, handler, http.MethodGet, "/me", logged.Token, nil))
+	if len(profile.Roles) != 1 || profile.Roles[0].RoleID != created.RoleID {
+		t.Fatalf("groups %+v", profile.Roles)
+	}
+}
+
+func TestStubKerberosRejectsDisabledHeaderAndToken(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	disabled := doJSON(t, handler, http.MethodPost, "/auth/kerberos", "", nil)
+	if disabled.Code != http.StatusForbidden || !strings.Contains(disabled.Body.String(), texts.ErrorKerberosDisabled) {
+		t.Fatalf("disabled %d %s", disabled.Code, disabled.Body.String())
+	}
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	keytabPath := write_TestKeytab(t)
+	server := map[string]any{
+		"label": "Active Directory", "host": "127.0.0.1", "attributeForMail": "mail",
+		"attributeForUsername": "sAMAccountName", "searchBase": "DC=corp,DC=local",
+		"ciphers": "ALL", "enableKerberos": true, "keytabPath": keytabPath,
+		"servicePrincipal": "HTTP/docs@BANK.LOCAL",
+	}
+	if doJSON(t, handler, http.MethodPost, "/auth/admin/config/ldap/server", chiefToken, server).Code != http.StatusOK {
+		t.Fatal("kerberos settings")
+	}
+	missing := doRaw(t, handler, http.MethodPost, "/auth/kerberos", "", nil, "")
+	if missing.Code != http.StatusUnauthorized || missing.Header().Get("WWW-Authenticate") != "Negotiate" {
+		t.Fatalf("missing header %d %s", missing.Code, missing.Header().Get("WWW-Authenticate"))
+	}
+	request := httptest.NewRequest(http.MethodPost, "/auth/kerberos", nil)
+	request.Header.Set("Authorization", "Negotiate bm90LWEtdGlja2V0")
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(bad, request)
+	if bad.Code != http.StatusUnauthorized || bad.Header().Get("WWW-Authenticate") != "Negotiate" {
+		t.Fatalf("bad token %d %s", bad.Code, bad.Body.String())
+	}
+}
+
+func write_TestKeytab(t *testing.T) string {
+	t.Helper()
+	loaded := keytab.New()
+	if err := loaded.AddEntry("HTTP/docs", "BANK.LOCAL", "password", time.Now(), 1, 18); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.CreateTemp(t.TempDir(), "docs.keytab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = loaded.Write(file); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return file.Name()
 }

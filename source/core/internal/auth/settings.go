@@ -19,20 +19,25 @@ type SignupSettings struct {
 
 // Подключение к LDAP или Active Directory. Поля повторяют настройки LDAP в open-webui
 type LdapSettings struct {
-	EnableLdap           bool   `json:"enableLdap"`
-	Label                string `json:"label"`
-	Host                 string `json:"host"`
-	Port                 int    `json:"port"`
-	AttributeForMail     string `json:"attributeForMail"`
-	AttributeForUsername string `json:"attributeForUsername"`
-	AppDN                string `json:"appDn"`
-	AppPassword          string `json:"appDnPassword"`
-	SearchBase           string `json:"searchBase"`
-	SearchFilters        string `json:"searchFilters"`
-	UseTLS               bool   `json:"useTls"`
-	CertificatePath      string `json:"certificatePath"`
-	ValidateCert         bool   `json:"validateCert"`
-	Ciphers              string `json:"ciphers"`
+	EnableLdap            bool   `json:"enableLdap"`
+	Label                 string `json:"label"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	AttributeForMail      string `json:"attributeForMail"`
+	AttributeForUsername  string `json:"attributeForUsername"`
+	AppDN                 string `json:"appDn"`
+	AppPassword           string `json:"appDnPassword"`
+	SearchBase            string `json:"searchBase"`
+	SearchFilters         string `json:"searchFilters"`
+	UseTLS                bool   `json:"useTls"`
+	CertificatePath       string `json:"certificatePath"`
+	ValidateCert          bool   `json:"validateCert"`
+	Ciphers               string `json:"ciphers"`
+	EnableGroupManagement bool   `json:"enableGroupManagement"`
+	GroupAttribute        string `json:"groupAttribute"`
+	EnableKerberos        bool   `json:"enableKerberos"`
+	KeytabPath            string `json:"keytabPath"`
+	ServicePrincipal      string `json:"servicePrincipal"`
 }
 
 // Начальные значения из .env

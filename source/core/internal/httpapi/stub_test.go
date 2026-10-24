@@ -8,8 +8,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/config"
@@ -560,6 +563,163 @@ func TestStubContactsFollowQuestion(t *testing.T) {
 	}
 }
 
+func TestStubDraftRevision(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	created := decodeJSON[roleResponse](t, doJSON(t, handler, http.MethodPost, "/roles", chiefToken, map[string]any{
+		"title": "Только вопросы", "permissions": []string{texts.PermissionChatUse},
+	}))
+	account := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"login": "clerk@corp.local", "password": "clerk-pass", "displayName": "Клерк", "role": texts.RoleUser,
+	}))
+	if doJSON(t, handler, http.MethodPatch, "/users/"+account.UserID, chiefToken, map[string]any{
+		"roleIds": []string{created.RoleID},
+	}).Code != http.StatusOK {
+		t.Fatal("role was not replaced")
+	}
+	limitedToken := login(t, handler, "clerk@corp.local", "clerk-pass")
+	limitedSession := createSession(t, handler, limitedToken)
+	if uploadMultipart(t, handler, "/sessions/"+limitedSession+"/attachments", limitedToken, "draft.txt", "Текст", nil).Code != http.StatusForbidden {
+		t.Fatal("upload without drafts.assist")
+	}
+	if uploadMultipart(t, handler, "/sessions/missing/attachments", employeeToken, "draft.txt", "Текст", nil).Code != http.StatusNotFound {
+		t.Fatal("missing session")
+	}
+	adminSession := createSession(t, handler, chiefToken)
+	if uploadMultipart(t, handler, "/sessions/"+adminSession+"/attachments", employeeToken, "draft.txt", "Текст", nil).Code != http.StatusForbidden {
+		t.Fatal("foreign session")
+	}
+
+	sessionID := createSession(t, handler, employeeToken)
+	if uploadMultipart(t, handler, "/sessions/"+sessionID+"/attachments", employeeToken, "sheet.xlsx", "нет", nil).Code != http.StatusBadRequest {
+		t.Fatal("xlsx accepted")
+	}
+	if uploadMultipart(t, handler, "/sessions/"+sessionID+"/attachments", employeeToken, "empty.txt", " \n", nil).Code != http.StatusBadRequest {
+		t.Fatal("empty text accepted")
+	}
+	original := "Черновик отчета."
+	uploaded := uploadMultipart(t, handler, "/sessions/"+sessionID+"/attachments", employeeToken, "draft.txt", original, nil)
+	if uploaded.Code != http.StatusOK {
+		t.Fatalf("upload %d %s", uploaded.Code, uploaded.Body.String())
+	}
+	attachment := decodeJSON[attachmentResponse](t, uploaded)
+	if attachment.AttachmentID != "att-1" || attachment.FileName != "draft.txt" || attachment.Characters != utf8.RuneCountInString(original) {
+		t.Fatalf("attachment %+v", attachment)
+	}
+	if doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]any{
+		"text": "допиши", "attachmentIds": []string{"att-missing"},
+	}).Code != http.StatusBadRequest {
+		t.Fatal("foreign attachment accepted")
+	}
+
+	response := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]any{
+		"text": "допиши раздел", "attachmentIds": []string{attachment.AttachmentID},
+	})
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"contacts"`) {
+		t.Fatalf("revision %d %s", response.Code, response.Body.String())
+	}
+	reply := decodeJSON[assistantReply](t, response)
+	if reply.Kind != texts.KindDraftRevision || reply.Draft == nil || reply.Contacts != nil {
+		t.Fatalf("reply %+v", reply)
+	}
+	if reply.Draft.AttachmentID != attachment.AttachmentID || reply.Draft.Title != "draft.txt" || reply.Draft.DraftLink == "" {
+		t.Fatalf("draft %+v", reply.Draft)
+	}
+	if !strings.Contains(reply.Draft.DraftText, original) || !strings.Contains(reply.Draft.DraftText, texts.DraftRevisionStubNote) {
+		t.Fatalf("draft text %q", reply.Draft.DraftText)
+	}
+	if reply.Text != texts.DraftRevisionStubNote || len(reply.Citations) != 1 || reply.Citations[0].Paragraph != texts.AnswerParagraph || reply.Citations[0].DocumentID != texts.SeedInstructionID {
+		t.Fatalf("citations %+v %q", reply.Citations, reply.Text)
+	}
+	if len(reply.Draft.Changes) != 1 || reply.Draft.Changes[0].Text != texts.DraftRevisionStubNote || reply.Draft.Changes[0].Citation == nil || reply.Draft.Changes[0].Citation.Paragraph != texts.AnswerParagraph {
+		t.Fatalf("changes %+v", reply.Draft.Changes)
+	}
+
+	continued := postMessage(t, handler, employeeToken, sessionID, "сократи")
+	if continued.Kind != texts.KindDraftRevision || continued.Draft == nil || !strings.Contains(continued.Draft.DraftText, reply.Draft.DraftText) {
+		t.Fatalf("continued %+v", continued.Draft)
+	}
+	if strings.Count(continued.Draft.DraftText, texts.DraftRevisionStubNote) < 2 {
+		t.Fatalf("note count %q", continued.Draft.DraftText)
+	}
+
+	history := doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil)
+	var stored struct {
+		Messages []struct {
+			Role        string              `json:"role"`
+			Attachments []messageAttachment `json:"attachments"`
+		} `json:"messages"`
+	}
+	decodeInto(t, history, &stored)
+	if len(stored.Messages) < 1 || stored.Messages[0].Role != "user" || len(stored.Messages[0].Attachments) != 1 || stored.Messages[0].Attachments[0].AttachmentID != attachment.AttachmentID || stored.Messages[0].Attachments[0].FileName != "draft.txt" {
+		t.Fatalf("history %+v", stored.Messages)
+	}
+	file := doRaw(t, handler, http.MethodGet, reply.Draft.DraftLink, employeeToken, nil, "")
+	if file.Code != http.StatusOK {
+		t.Fatalf("docx %d", file.Code)
+	}
+	plain, err := chunk.Extract_DocumentText("draft.docx", file.Body.Bytes())
+	if err != nil || !strings.Contains(plain, original) || !strings.Contains(plain, texts.DraftRevisionStubNote) {
+		t.Fatalf("docx text %q %v", plain, err)
+	}
+}
+
+func TestStubSessionRenameAndDelete(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	sessionID := createSession(t, handler, employeeToken)
+	postMessage(t, handler, employeeToken, sessionID, "Как регистрировать входящий документ")
+	foreignID := createSession(t, handler, chiefToken)
+
+	listed := doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil)
+	var sessionList struct {
+		Sessions []sessionLine `json:"sessions"`
+	}
+	decodeInto(t, listed, &sessionList)
+	if len(sessionList.Sessions) != 1 || !sessionList.Sessions[0].CanRename || !sessionList.Sessions[0].CanDelete || sessionList.Sessions[0].Title == "" {
+		t.Fatalf("flags %+v", sessionList.Sessions)
+	}
+	originalTitle := sessionList.Sessions[0].Title
+	if doJSON(t, handler, http.MethodPatch, "/sessions/"+sessionID, employeeToken, map[string]string{"title": "   "}).Code != http.StatusBadRequest {
+		t.Fatal("empty title accepted")
+	}
+	if doJSON(t, handler, http.MethodPatch, "/sessions/"+foreignID, employeeToken, map[string]string{"title": "Чужой"}).Code != http.StatusForbidden {
+		t.Fatal("foreign rename")
+	}
+	if doJSON(t, handler, http.MethodPatch, "/sessions/missing", employeeToken, map[string]string{"title": "Нет"}).Code != http.StatusNotFound {
+		t.Fatal("missing rename")
+	}
+	longTitle := strings.Repeat("а", 80)
+	renamed := decodeJSON[sessionLine](t, doJSON(t, handler, http.MethodPatch, "/sessions/"+sessionID, employeeToken, map[string]string{"title": longTitle}))
+	if renamed.Title == longTitle || len([]rune(renamed.Title)) > 60 || !renamed.CanDelete || !strings.HasSuffix(renamed.Title, "...") {
+		t.Fatalf("renamed %+v", renamed)
+	}
+	postMessage(t, handler, employeeToken, sessionID, "Следующий вопрос не должен сменить заголовок")
+	decodeInto(t, doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil), &sessionList)
+	if sessionList.Sessions[0].Title != renamed.Title || sessionList.Sessions[0].Title == originalTitle {
+		t.Fatalf("title changed %+v", sessionList.Sessions[0])
+	}
+	if doJSON(t, handler, http.MethodDelete, "/sessions/"+foreignID, employeeToken, nil).Code != http.StatusForbidden {
+		t.Fatal("foreign delete")
+	}
+	if doJSON(t, handler, http.MethodDelete, "/sessions/missing", employeeToken, nil).Code != http.StatusNotFound {
+		t.Fatal("missing delete")
+	}
+	deleted := doJSON(t, handler, http.MethodDelete, "/sessions/"+sessionID, employeeToken, nil)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete %d", deleted.Code)
+	}
+	if doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil).Code != http.StatusNotFound {
+		t.Fatal("deleted session still opens")
+	}
+	decodeInto(t, doJSON(t, handler, http.MethodGet, "/sessions", employeeToken, nil), &sessionList)
+	if len(sessionList.Sessions) != 0 {
+		t.Fatalf("list after delete %+v", sessionList.Sessions)
+	}
+}
+
 func uploadDocument(t *testing.T, handler http.Handler, token, fileName, content, title, edition, accessLevel string) uploadResponse {
 	t.Helper()
 	response := uploadMultipart(t, handler, "/documents", token, fileName, content, map[string]string{
@@ -653,4 +813,107 @@ func logWriter() io.Writer {
 
 func setLogWriter(writer io.Writer) {
 	log.SetOutput(writer)
+}
+
+func TestStubProcessesAndFolderImport(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	adminToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+
+	denied := doJSON(t, handler, http.MethodPost, "/processes", employeeToken, map[string]string{"title": "Кадры"})
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("employee create %d", denied.Code)
+	}
+	empty := doJSON(t, handler, http.MethodPost, "/processes", adminToken, map[string]string{"title": " "})
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty title %d", empty.Code)
+	}
+	created := decodeJSON[processDetail](t, doJSON(t, handler, http.MethodPost, "/processes", adminToken, map[string]string{"title": "Кадры"}))
+	if created.ProcessID != "process-1" || created.Title != "Кадры" || created.AnswerPrompt != texts.LiveAnswerPrompt {
+		t.Fatalf("created %+v", created)
+	}
+	listed := decodeJSON[struct {
+		Processes []processLine `json:"processes"`
+	}](t, doJSON(t, handler, http.MethodGet, "/processes", employeeToken, nil))
+	if len(listed.Processes) < 2 || listed.Processes[0].ProcessID == "" {
+		t.Fatalf("list %+v", listed.Processes)
+	}
+
+	sessionID := createSession(t, handler, employeeToken)
+	unknown := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]string{
+		"text":      "вопрос",
+		"processId": "missing",
+	})
+	if unknown.Code != http.StatusBadRequest {
+		t.Fatalf("unknown process %d %s", unknown.Code, unknown.Body.String())
+	}
+
+	uploaded := uploadMultipart(t, handler, "/documents", adminToken, "staff.txt", "кадровый регламент", map[string]string{
+		"title":   "Кадровый регламент",
+		"process": created.ProcessID,
+		"scope":   texts.ScopeGlobal,
+	})
+	if uploaded.Code != http.StatusOK {
+		t.Fatalf("upload %d %s", uploaded.Code, uploaded.Body.String())
+	}
+	staffUpload := decodeJSON[uploadResponse](t, uploaded)
+	if staffUpload.ProcessID != created.ProcessID {
+		t.Fatalf("upload process %+v", staffUpload)
+	}
+	page := listDocumentPage(t, handler, adminToken, "")
+	filtered := doJSON(t, handler, http.MethodGet, "/documents?process="+created.ProcessID, adminToken, nil)
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), staffUpload.DocumentID) {
+		t.Fatalf("filtered %d %s", filtered.Code, filtered.Body.String())
+	}
+	other := doJSON(t, handler, http.MethodGet, "/documents?process="+texts.ProcessDocuments, adminToken, nil)
+	if other.Code != http.StatusOK || strings.Contains(other.Body.String(), staffUpload.DocumentID) {
+		t.Fatalf("default process list %s", other.Body.String())
+	}
+	missingProcess := doJSON(t, handler, http.MethodGet, "/documents?process=missing", adminToken, nil)
+	if missingProcess.Code != http.StatusBadRequest {
+		t.Fatalf("missing process list %d", missingProcess.Code)
+	}
+	if len(page.Documents) == 0 || page.Documents[0].ProcessID == "" {
+		t.Fatalf("document process %+v", page.Documents)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "imported.txt"), []byte("импорт"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sheet.xlsx"), []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	imported := postForm(t, handler, "/documents/import", adminToken, map[string]string{
+		"path":    dir,
+		"process": created.ProcessID,
+		"edition": "2.0",
+		"scope":   texts.ScopeGlobal,
+	})
+	if imported.Code != http.StatusOK {
+		t.Fatalf("import %d %s", imported.Code, imported.Body.String())
+	}
+	body := decodeJSON[importResponse](t, imported)
+	if len(body.Documents) != 1 || body.Documents[0].ProcessID != created.ProcessID || len(body.Skipped) != 1 || body.Skipped[0] != "sheet.xlsx" {
+		t.Fatalf("import body %+v", body)
+	}
+	parent := postForm(t, handler, "/documents/import", adminToken, map[string]string{"path": filepath.Join(dir, "..", "secret")})
+	if parent.Code != http.StatusBadRequest {
+		t.Fatalf("parent import %d", parent.Code)
+	}
+}
+
+func postForm(t *testing.T, handler http.Handler, path, token string, fields map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return doRaw(t, handler, http.MethodPost, path, token, payload.Bytes(), writer.FormDataContentType())
 }

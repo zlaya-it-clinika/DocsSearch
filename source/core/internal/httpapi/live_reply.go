@@ -20,9 +20,15 @@ type chatTurn struct {
 	Text string
 }
 
+type replyPrompts struct {
+	Select  string
+	Answer  string
+	Clarify string
+}
+
 func build_LiveAssistantReply(chatter interface {
 	Complete_Chat(messages []ollama.ChatMessage) (string, error)
-}, question string, history []chatTurn, visible []livestore.SimilarChunk, closed []livestore.SimilarChunk) (assistantReply, []shownDocument, error) {
+}, question string, history []chatTurn, visible []livestore.SimilarChunk, closed []livestore.SimilarChunk, prompts replyPrompts) (assistantReply, []shownDocument, error) {
 	kind, selected := livestore.Choose_LiveReplyKind(visible, closed)
 	if kind == texts.KindFallback {
 		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
@@ -34,13 +40,13 @@ func build_LiveAssistantReply(chatter interface {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
 	if kind == texts.KindClarify {
-		text, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveClarifyPrompt, question, history, selected))
+		text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Clarify, texts.LiveClarifyPrompt), question, history, selected))
 		if err != nil || strings.TrimSpace(text) == "" {
 			return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 		}
 		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
 	}
-	selectText, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveSelectPrompt, question, history, selected))
+	selectText, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Select, texts.LiveSelectPrompt), question, history, selected))
 	if err != nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
@@ -49,7 +55,7 @@ func build_LiveAssistantReply(chatter interface {
 	if len(selected) == 0 {
 		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
 	}
-	text, err := chatter.Complete_Chat(build_ChatMessages(texts.LiveAnswerPrompt, question, history, selected))
+	text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Answer, texts.LiveAnswerPrompt), question, history, selected))
 	if err != nil || strings.TrimSpace(text) == "" {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
@@ -78,6 +84,13 @@ func build_LiveAssistantReply(chatter interface {
 		})
 	}
 	return reply_WithContacts(reply, nil), documents, nil
+}
+
+func prompt_OrText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func parse_FragmentNumbers(raw string, count int) []int {

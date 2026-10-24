@@ -70,7 +70,7 @@ func TestBuild_LiveAssistantReplyKinds(t *testing.T) {
 	}
 	chatter := &scriptedChat{}
 
-	denied, deniedDocs, deniedErr := build_LiveAssistantReply(chatter, "вопрос", nil, nil, []livestore.SimilarChunk{closed})
+	denied, deniedDocs, deniedErr := build_LiveAssistantReply(chatter, "вопрос", nil, nil, []livestore.SimilarChunk{closed}, defaultReplyPrompts())
 	if deniedErr != nil || chatter.calls != 0 || denied.Kind != texts.KindAccessDenied || denied.Text != texts.AccessDeniedText {
 		t.Fatalf("denied %+v %v calls %d", denied, deniedErr, chatter.calls)
 	}
@@ -82,13 +82,13 @@ func TestBuild_LiveAssistantReplyKinds(t *testing.T) {
 		DocumentID: "doc-weak",
 		Content:    "слабый",
 		Distance:   0.8,
-	}}, nil)
+	}}, nil, defaultReplyPrompts())
 	if fallbackErr != nil || chatter.calls != 0 || fallback.Kind != texts.KindFallback || fallback.Text != texts.FallbackText || fallback.Contacts == nil {
 		t.Fatalf("fallback %+v %v calls %d", fallback, fallbackErr, chatter.calls)
 	}
 
 	chatter.replies = []string{"1", "Ответ по фрагменту."}
-	answer, answerDocs, answerErr := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{visible}, []livestore.SimilarChunk{closed})
+	answer, answerDocs, answerErr := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{visible}, []livestore.SimilarChunk{closed}, defaultReplyPrompts())
 	if answerErr != nil || chatter.calls != 2 || answer.Kind != texts.KindAnswer || answer.Text != "Ответ по фрагменту." {
 		t.Fatalf("answer %+v %v calls %d", answer, answerErr, chatter.calls)
 	}
@@ -107,7 +107,7 @@ func TestGroundedSelectionUsesOnlyChosenFragments(t *testing.T) {
 	first := livestore.SimilarChunk{DocumentID: "doc-a", Paragraph: "1.1", Content: "первый фрагмент", Distance: 0.2}
 	second := livestore.SimilarChunk{DocumentID: "doc-a", Paragraph: "1.2", Content: "второй фрагмент", Distance: 0.3}
 	chatter := &scriptedChat{replies: []string{"2", "Коротко по второму."}}
-	answer, docs, err := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{first, second}, nil)
+	answer, docs, err := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{first, second}, nil, defaultReplyPrompts())
 	if err != nil || answer.Kind != texts.KindAnswer || answer.Text != "Коротко по второму." || answer.RelevancePercent != 70 {
 		t.Fatalf("answer %+v %v", answer, err)
 	}
@@ -119,14 +119,78 @@ func TestGroundedSelectionUsesOnlyChosenFragments(t *testing.T) {
 	}
 
 	empty := &scriptedChat{replies: []string{"нет"}}
-	fallback, _, fallbackErr := build_LiveAssistantReply(empty, "вопрос", nil, []livestore.SimilarChunk{first}, nil)
+	fallback, _, fallbackErr := build_LiveAssistantReply(empty, "вопрос", nil, []livestore.SimilarChunk{first}, nil, defaultReplyPrompts())
 	if fallbackErr != nil || empty.calls != 1 || fallback.Kind != texts.KindFallback || len(fallback.Citations) != 0 {
 		t.Fatalf("empty select %+v calls %d err %v", fallback, empty.calls, fallbackErr)
 	}
 
 	broken := &scriptedChat{err: livestore.ErrEmbedUnavailable}
-	_, _, brokenErr := build_LiveAssistantReply(broken, "вопрос", nil, []livestore.SimilarChunk{first}, nil)
+	_, _, brokenErr := build_LiveAssistantReply(broken, "вопрос", nil, []livestore.SimilarChunk{first}, nil, defaultReplyPrompts())
 	if brokenErr == nil {
 		t.Fatal("select error was ignored")
 	}
+}
+
+func TestBuild_LiveAssistantReplyUsesProcessAnswerPrompt(t *testing.T) {
+	prompts := defaultReplyPrompts()
+	prompts.Answer = "промпт кадров"
+	chatter := &scriptedChat{replies: []string{"1", "ответ кадров"}}
+	chunk := livestore.SimilarChunk{DocumentID: "doc-a", Content: "текст кадров", Distance: 0.2}
+	answer, _, err := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{chunk}, nil, prompts)
+	if err != nil || answer.Text != "ответ кадров" || len(chatter.systems) != 2 || chatter.systems[1] != "промпт кадров" {
+		t.Fatalf("answer %+v prompts %+v err %v", answer, chatter.systems, err)
+	}
+}
+
+func TestBuild_DraftRevisionJoinsParts(t *testing.T) {
+	left := strings.Repeat("а", 4000)
+	right := strings.Repeat("б", 4000)
+	chatter := &scriptedChat{replies: []string{
+		`{"draftText":"первая","changes":[{"text":"Сократил начало","paragraph":"3.2"}]}`,
+		"```json\n{\"draftText\":\"вторая\",\"changes\":[{\"text\":\"Убрал лишнее\",\"paragraph\":\"9.9\"}]}\n```",
+	}}
+	chunks := []livestore.SimilarChunk{{
+		DocumentID: texts.SeedInstructionID,
+		Title:      texts.SeedInstructionTitle,
+		Edition:    "1.0",
+		Section:    "3",
+		Paragraph:  "3.2",
+		Content:    "цитата пункта",
+		Scope:      texts.ScopeGlobal,
+	}}
+	revised, changes, citations, err := build_DraftRevision(chatter, "сократи", chunks, left+"\n\n"+right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised != "первая\n\nвторая" || chatter.calls != 2 {
+		t.Fatalf("%q calls %d", revised, chatter.calls)
+	}
+	if !strings.Contains(chatter.users[0], left) || strings.Contains(chatter.users[0], right) {
+		t.Fatal("parts were mixed")
+	}
+	if chatter.systems[0] != texts.LiveDraftPrompt {
+		t.Fatalf("prompt %q", chatter.systems[0])
+	}
+	if len(changes) != 2 || changes[0].Citation == nil || changes[0].Citation.Paragraph != "3.2" || changes[0].Citation.DocumentID != texts.SeedInstructionID || changes[0].Citation.Quote != "цитата пункта" {
+		t.Fatalf("changes %+v", changes)
+	}
+	if changes[1].Citation != nil {
+		t.Fatal("invented citation")
+	}
+	if len(citations) != 1 || citations[0].Paragraph != "3.2" {
+		t.Fatalf("citations %+v", citations)
+	}
+	keptChat := &scriptedChat{replies: []string{`{"draftText":"тот же","changes":[]}`}}
+	kept, keptChanges, keptCitations, keptErr := build_DraftRevision(keptChat, "проверь", nil, "короткий")
+	if keptErr != nil || kept != "тот же" || len(keptChanges) != 0 || len(keptCitations) != 0 || draft_Summary(keptChanges) != texts.DraftRevisionKept {
+		t.Fatalf("kept %q %+v %v", kept, keptChanges, keptErr)
+	}
+	bad := &scriptedChat{replies: []string{"нет"}}
+	if _, _, _, badErr := build_DraftRevision(bad, "проверь", nil, "короткий"); badErr == nil {
+		t.Fatal("bad json accepted")
+	}
+}
+
+func defaultReplyPrompts() replyPrompts {
+	return replyPrompts{Select: texts.LiveSelectPrompt, Answer: texts.LiveAnswerPrompt, Clarify: texts.LiveClarifyPrompt}
 }

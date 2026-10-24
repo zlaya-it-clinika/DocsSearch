@@ -34,9 +34,10 @@ const (
 
 // Пользователь каталога после проверки пароля
 type LdapIdentity struct {
-	DN    string
-	Email string
-	Name  string
+	DN     string
+	Email  string
+	Name   string
+	Groups []string
 }
 
 // Вход по логину каталога. Порядок шагов как в open-webui:
@@ -69,7 +70,7 @@ func Authenticate_LdapUser(settings LdapSettings, username, password string) (Ld
 		int(ldapTimeout/time.Second),
 		false,
 		Build_LdapSearchFilter(settings, username),
-		[]string{settings.AttributeForUsername, settings.AttributeForMail, ldapNameAttribute},
+		ldap_SearchAttributes(settings),
 		nil,
 	)
 	result, err := connection.Search(searchRequest)
@@ -83,8 +84,61 @@ func Authenticate_LdapUser(settings LdapSettings, username, password string) (Ld
 		return LdapIdentity{}, ErrLdapInvalidCredentials
 	}
 	entry := result.Entries[0]
+	identity, err := identity_FromEntry(entry, settings, username)
+	if err != nil {
+		return LdapIdentity{}, err
+	}
 
-	// Фильтр мог найти запись по другому значению атрибута, поэтому сверяем логин явно
+	if err := connection.Bind(entry.DN, password); err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+			return LdapIdentity{}, ErrLdapInvalidCredentials
+		}
+		return LdapIdentity{}, fmt.Errorf("%w: user bind: %v", ErrLdapUnavailable, err)
+	}
+	return identity, nil
+}
+
+// Поиск без пароля сотрудника: билет Kerberos уже доказал имя, почту и группы берем из каталога.
+func Lookup_LdapUser(settings LdapSettings, username string) (LdapIdentity, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return LdapIdentity{}, ErrLdapInvalidCredentials
+	}
+	connection, err := dial_LdapServer(settings)
+	if err != nil {
+		return LdapIdentity{}, fmt.Errorf("%w: connect: %v", ErrLdapUnavailable, err)
+	}
+	defer connection.Close()
+	if strings.TrimSpace(settings.AppDN) != "" {
+		if err := connection.Bind(settings.AppDN, settings.AppPassword); err != nil {
+			return LdapIdentity{}, fmt.Errorf("%w: service bind: %v", ErrLdapUnavailable, err)
+		}
+	}
+	searchRequest := ldap.NewSearchRequest(
+		settings.SearchBase,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		ldapSearchSizeLimit,
+		int(ldapTimeout/time.Second),
+		false,
+		Build_LdapSearchFilter(settings, username),
+		ldap_SearchAttributes(settings),
+		nil,
+	)
+	result, err := connection.Search(searchRequest)
+	if err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultSizeLimitExceeded) {
+			return LdapIdentity{}, ErrLdapInvalidCredentials
+		}
+		return LdapIdentity{}, fmt.Errorf("%w: search: %v", ErrLdapUnavailable, err)
+	}
+	if len(result.Entries) != 1 {
+		return LdapIdentity{}, ErrLdapInvalidCredentials
+	}
+	return identity_FromEntry(result.Entries[0], settings, username)
+}
+
+func identity_FromEntry(entry *ldap.Entry, settings LdapSettings, username string) (LdapIdentity, error) {
 	if !check_ValueListed(entry.GetEqualFoldAttributeValues(settings.AttributeForUsername), username) {
 		return LdapIdentity{}, ErrLdapInvalidCredentials
 	}
@@ -96,14 +150,31 @@ func Authenticate_LdapUser(settings LdapSettings, username, password string) (Ld
 	if name == "" {
 		name = username
 	}
+	return LdapIdentity{
+		DN:     entry.DN,
+		Email:  email,
+		Name:   name,
+		Groups: Group_Names(entry.GetAttributeValues(group_Attribute(settings))),
+	}, nil
+}
 
-	if err := connection.Bind(entry.DN, password); err != nil {
-		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
-			return LdapIdentity{}, ErrLdapInvalidCredentials
-		}
-		return LdapIdentity{}, fmt.Errorf("%w: user bind: %v", ErrLdapUnavailable, err)
+func group_Attribute(settings LdapSettings) string {
+	name := strings.TrimSpace(settings.GroupAttribute)
+	if name == "" {
+		return "memberOf"
 	}
-	return LdapIdentity{DN: entry.DN, Email: email, Name: name}, nil
+	return name
+}
+
+func ldap_SearchAttributes(settings LdapSettings) []string {
+	attributes := []string{settings.AttributeForUsername, settings.AttributeForMail, ldapNameAttribute}
+	groupAttribute := group_Attribute(settings)
+	for _, attribute := range attributes {
+		if strings.EqualFold(attribute, groupAttribute) {
+			return attributes
+		}
+	}
+	return append(attributes, groupAttribute)
 }
 
 // (&(sAMAccountName=<логин>)<дополнительные фильтры>). Логин экранируется, чтобы его нельзя было

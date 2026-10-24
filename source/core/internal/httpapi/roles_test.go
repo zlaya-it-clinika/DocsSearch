@@ -1,0 +1,86 @@
+package httpapi
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	"docssearch/core/internal/config"
+	"docssearch/core/internal/texts"
+)
+
+func TestStubRolesFlagsAndDocumentVisibility(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	chiefToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+
+	me := decodeJSON[profileResponse](t, doJSON(t, handler, http.MethodGet, "/me", employeeToken, nil))
+	if me.Role != texts.RoleUser || !containsString(me.Permissions, texts.PermissionChatUse) || containsString(me.Permissions, texts.PermissionRolesManage) {
+		t.Fatalf("employee profile %+v", me)
+	}
+	if len(me.Roles) != 1 || me.Roles[0].RoleID != texts.RoleIDUser {
+		t.Fatalf("employee roles %+v", me.Roles)
+	}
+
+	permissions := doJSON(t, handler, http.MethodGet, "/permissions", employeeToken, nil)
+	if permissions.Code != http.StatusOK || !strings.Contains(permissions.Body.String(), texts.PermissionChatUse) {
+		t.Fatalf("permissions %d %s", permissions.Code, permissions.Body.String())
+	}
+	if doJSON(t, handler, http.MethodPost, "/roles", employeeToken, map[string]any{
+		"title": "Архив", "permissions": []string{texts.PermissionChatUse},
+	}).Code != http.StatusForbidden {
+		t.Fatal("employee created a role")
+	}
+
+	documents := listDocuments(t, handler, employeeToken)
+	if !hasDocument(documents, texts.SeedInstructionID) || hasDocument(documents, texts.SeedRestrictedID) {
+		t.Fatalf("employee documents %+v", documents)
+	}
+
+	if doJSON(t, handler, http.MethodDelete, "/roles/"+texts.RoleIDChief, chiefToken, nil).Code != http.StatusForbidden {
+		t.Fatal("system role deleted")
+	}
+
+	createdAdmin := decodeJSON[accountResponse](t, doJSON(t, handler, http.MethodPost, "/users", chiefToken, map[string]any{
+		"login": "second-admin@corp.local", "password": "second-admin", "displayName": "Второй", "role": texts.RoleAdmin,
+	}))
+	secondToken := login(t, handler, "second-admin@corp.local", "second-admin")
+	demote := doJSON(t, handler, http.MethodPatch, "/users/"+texts.SeedAdminID, secondToken, map[string]any{
+		"roleIds": []string{texts.RoleIDUser},
+	})
+	if demote.Code != http.StatusForbidden {
+		t.Fatalf("last chief removed %d %s", demote.Code, demote.Body.String())
+	}
+
+	created := decodeJSON[roleResponse](t, doJSON(t, handler, http.MethodPost, "/roles", chiefToken, map[string]any{
+		"title": "Архив", "description": "Свои вопросы", "permissions": []string{texts.PermissionChatUse},
+	}))
+	if created.RoleID != "role-1" || created.System {
+		t.Fatalf("created role %+v", created)
+	}
+	assign := doJSON(t, handler, http.MethodPatch, "/users/"+createdAdmin.UserID, chiefToken, map[string]any{
+		"roleIds": []string{texts.RoleIDAdmin, created.RoleID},
+	})
+	if assign.Code != http.StatusOK {
+		t.Fatalf("assign %d %s", assign.Code, assign.Body.String())
+	}
+	if doJSON(t, handler, http.MethodDelete, "/roles/"+created.RoleID, chiefToken, nil).Code != http.StatusConflict {
+		t.Fatal("role with users was deleted")
+	}
+	events := doJSON(t, handler, http.MethodGet, "/audit/permissions", chiefToken, nil)
+	if events.Code != http.StatusOK || !strings.Contains(events.Body.String(), texts.PermissionActionAssign) {
+		t.Fatalf("permission audit %d %s", events.Code, events.Body.String())
+	}
+	if doJSON(t, handler, http.MethodGet, "/audit/permissions", employeeToken, nil).Code != http.StatusForbidden {
+		t.Fatal("employee read permission audit")
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}

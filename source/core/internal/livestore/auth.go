@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -74,6 +75,9 @@ func (store *LiveStore) Signup_User(ctx context.Context, email, password, displa
 		if err != nil {
 			return err
 		}
+		if err := store.assign_NewAccountRole(ctx, tx, account.UserID, usersBefore, accessLevel, pending); err != nil {
+			return err
+		}
 		if err := insert_AuthToken(ctx, tx, token, account.UserID); err != nil {
 			return err
 		}
@@ -101,6 +105,43 @@ func (store *LiveStore) Login_LdapUser(ctx context.Context, username, password, 
 	if err != nil {
 		return LoginResult{}, err
 	}
+	return store.login_DirectoryIdentity(ctx, ldapSettings, identity, token)
+}
+
+func (store *LiveStore) Kerberos_IsEnabled(ctx context.Context) (bool, error) {
+	ldapSettings, err := store.read_LdapSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	return ldapSettings.EnableKerberos, nil
+}
+
+func (store *LiveStore) Login_KerberosUser(ctx context.Context, negotiate []byte, token string) (LoginResult, error) {
+	ldapSettings, err := store.read_LdapSettings(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if !ldapSettings.EnableKerberos {
+		return LoginResult{}, ErrKerberosDisabled
+	}
+	username, err := auth.Accept_NegotiateToken(ldapSettings.KeytabPath, ldapSettings.ServicePrincipal, negotiate)
+	if err != nil {
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	if ldapSettings.EnableLdap {
+		identity, lookupError := auth.Lookup_LdapUser(ldapSettings, username)
+		if errors.Is(lookupError, auth.ErrLdapInvalidCredentials) {
+			return LoginResult{}, ErrInvalidCredentials
+		}
+		if lookupError != nil {
+			return LoginResult{}, lookupError
+		}
+		return store.login_DirectoryIdentity(ctx, ldapSettings, identity, token)
+	}
+	return store.login_ExistingLogin(ctx, username, token)
+}
+
+func (store *LiveStore) login_DirectoryIdentity(ctx context.Context, ldapSettings auth.LdapSettings, identity auth.LdapIdentity, token string) (LoginResult, error) {
 	signup, err := store.read_SignupSettings(ctx)
 	if err != nil {
 		return LoginResult{}, err
@@ -117,11 +158,51 @@ func (store *LiveStore) Login_LdapUser(ctx context.Context, username, password, 
 			}
 			accessLevel, pending := auth.Access_ForRole(role_ForNewAccount(usersBefore, signup))
 			account, err = insert_Account(ctx, tx, identity.Email, passwordHash, identity.Name, accessLevel, pending)
+			if err != nil {
+				return err
+			}
+			if err = store.assign_NewAccountRole(ctx, tx, account.UserID, usersBefore, accessLevel, pending); err != nil {
+				return err
+			}
 		}
 		if err != nil {
 			return err
 		}
+		if ldapSettings.EnableGroupManagement {
+			if err = store.sync_GroupRoles(ctx, tx, account.UserID, identity.Groups, usersBefore, signup); err != nil {
+				return err
+			}
+			account, err = scan_Account(tx.QueryRow(ctx, `SELECT `+accountColumns+` FROM users WHERE user_id = $1`, account.UserID))
+			if err != nil {
+				return err
+			}
+		}
 		if err := insert_AuthToken(ctx, tx, token, account.UserID); err != nil {
+			return err
+		}
+		result = login_ResultFor(account, token)
+		return nil
+	})
+	return result, err
+}
+
+func (store *LiveStore) login_ExistingLogin(ctx context.Context, username, token string) (LoginResult, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	var result LoginResult
+	err := store.run_AccountsTransaction(ctx, func(tx pgx.Tx, usersBefore int) error {
+		account, err := scan_Account(tx.QueryRow(ctx, `
+			SELECT `+accountColumns+` FROM users WHERE lower(login) = lower($1)
+			ORDER BY created_at LIMIT 1`, username))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return err
+		}
+		if err = insert_AuthToken(ctx, tx, token, account.UserID); err != nil {
 			return err
 		}
 		result = login_ResultFor(account, token)

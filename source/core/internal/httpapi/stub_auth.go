@@ -83,7 +83,7 @@ func (stubStore *stub) serve_LdapLogin(responseWriter http.ResponseWriter, reque
 		return
 	}
 	// Каталог может отвечать долго, поэтому ходим в него без блокировки заглушки
-	identity, err := auth.Authenticate_LdapUser(ldapSettings, body.Login, body.Password)
+	identity, err := stubStore.lookup_LdapIdentity(ldapSettings, body.Login, body.Password)
 	if err != nil {
 		write_LdapError(responseWriter, err)
 		return
@@ -91,16 +91,72 @@ func (stubStore *stub) serve_LdapLogin(responseWriter http.ResponseWriter, reque
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
 	record := stubStore.find_UserByLogin(identity.Email)
+	usersBefore := len(stubStore.users)
 	if record == nil {
 		randomPassword, err := create_RandomToken()
 		if err != nil {
 			write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
 			return
 		}
-		accessLevel, pending := auth.Access_ForRole(stubStore.role_ForNewAccount(len(stubStore.users)))
+		accessLevel, pending := auth.Access_ForRole(stubStore.role_ForNewAccount(usersBefore))
 		record = stubStore.create_NextUser(identity.Email, randomPassword, identity.Name, accessLevel, pending)
+	} else {
+		usersBefore = len(stubStore.users)
+	}
+	if ldapSettings.EnableGroupManagement {
+		stubStore.apply_GroupRoles(record, identity.Groups, usersBefore)
 	}
 	stubStore.write_LoginForRecord(responseWriter, record)
+}
+
+type ldapDirectoryUser struct {
+	password string
+	identity auth.LdapIdentity
+}
+
+// Каталог для тестов: без сервера LDAP вход берет заранее записанную запись.
+var ldapDirectory map[string]ldapDirectoryUser
+
+func (stubStore *stub) lookup_LdapIdentity(settings auth.LdapSettings, username, password string) (auth.LdapIdentity, error) {
+	if ldapDirectory != nil {
+		entry, found := ldapDirectory[strings.ToLower(strings.TrimSpace(username))]
+		if !found || entry.password != password {
+			return auth.LdapIdentity{}, auth.ErrLdapInvalidCredentials
+		}
+		return entry.identity, nil
+	}
+	return auth.Authenticate_LdapUser(settings, username, password)
+}
+
+func (stubStore *stub) lookup_LdapIdentityWithoutPassword(settings auth.LdapSettings, username string) (auth.LdapIdentity, error) {
+	if ldapDirectory != nil {
+		entry, found := ldapDirectory[strings.ToLower(strings.TrimSpace(username))]
+		if !found {
+			return auth.LdapIdentity{}, auth.ErrLdapInvalidCredentials
+		}
+		return entry.identity, nil
+	}
+	return auth.Lookup_LdapUser(settings, username)
+}
+
+func (stubStore *stub) apply_GroupRoles(record *userRecord, groups []string, usersBefore int) {
+	mapped := []auth.GroupRole{}
+	for _, role := range stubStore.roles {
+		if strings.TrimSpace(role.ldapGroup) == "" {
+			continue
+		}
+		mapped = append(mapped, auth.GroupRole{RoleID: role.id, Group: role.ldapGroup})
+	}
+	roleName := stubStore.role_ForNewAccount(usersBefore)
+	accessLevel, pending := auth.Access_ForRole(roleName)
+	next := auth.RoleIDs_ForGroups(groups, mapped, record.roleIDs, auth.RoleID_ForNewAccount(usersBefore, accessLevel, pending))
+	old := copy_Strings(record.roleIDs)
+	if stubStore.chiefs_After(record.id, next) == 0 && contains_Role(old, texts.RoleIDChief) {
+		return
+	}
+	record.roleIDs = next
+	stubStore.sync_Access(record)
+	stubStore.record_RoleDiff(record.id, record.id, old, next)
 }
 
 // Ответ на ошибку проверки в каталоге. Общий для заглушки, боевой режим разбирает ошибки в write_LiveError

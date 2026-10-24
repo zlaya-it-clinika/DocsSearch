@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"docssearch/core/internal/texts"
 )
 
 type AuditLine struct {
@@ -110,6 +113,74 @@ func (store *LiveStore) Load_SessionForMessage(ctx context.Context, token, sessi
 	return account, templateStep, templateState, nil
 }
 
+func (store *LiveStore) Rename_Session(ctx context.Context, token, sessionID, title string) (SessionLine, error) {
+	account, err := store.Find_AccountByToken(ctx, token)
+	if err != nil {
+		return SessionLine{}, err
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return SessionLine{}, ErrInvalidBody
+	}
+	var line SessionLine
+	err = store.pool.QueryRow(ctx, `
+		UPDATE sessions SET title = $3, updated_at = now()
+		WHERE session_id = $1 AND owner_user_id = $2
+		RETURNING session_id, title, created_at, updated_at`, sessionID, account.UserID, title).Scan(&line.SessionID, &line.Title, &line.CreatedAt, &line.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if accessError := store.session_Access(ctx, sessionID, account.UserID); accessError != nil {
+			return SessionLine{}, accessError
+		}
+		return SessionLine{}, ErrNotFound
+	}
+	if err != nil {
+		return SessionLine{}, err
+	}
+	return line, nil
+}
+
+func (store *LiveStore) Delete_Session(ctx context.Context, token, sessionID string) error {
+	account, err := store.Find_AccountByToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	if err = store.session_Access(ctx, sessionID, account.UserID); err != nil {
+		return err
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// Сообщения не каскадом: иначе удаление сессии упрется во внешний ключ
+	if _, err = tx.Exec(ctx, `DELETE FROM session_messages WHERE session_id = $1`, sessionID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM sessions WHERE session_id = $1 AND owner_user_id = $2`, sessionID, account.UserID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
+func (store *LiveStore) session_Access(ctx context.Context, sessionID, userID string) error {
+	var ownerID string
+	err := store.pool.QueryRow(ctx, `SELECT owner_user_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if ownerID != userID {
+		return ErrAccessDenied
+	}
+	return nil
+}
+
 func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID string, templateStep int, templateState, userBody, assistantBody, auditDocuments []byte, userID, displayName, question, title string) error {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
@@ -151,7 +222,7 @@ func (store *LiveStore) Save_SessionExchange(ctx context.Context, sessionID stri
 }
 
 func (store *LiveStore) List_Audit(ctx context.Context, token string) ([]AuditLine, error) {
-	if _, err := store.require_Admin(ctx, token); err != nil {
+	if _, err := store.require_Permission(ctx, token, texts.PermissionAuditView); err != nil {
 		return nil, err
 	}
 	rows, err := store.pool.Query(ctx, `

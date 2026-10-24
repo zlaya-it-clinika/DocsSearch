@@ -31,9 +31,11 @@ var (
 	ErrEmbedSize          = errors.New("embed size")
 	ErrEmbedUnavailable   = errors.New("embed unavailable")
 	ErrUnsupportedFile    = errors.New("unsupported file")
+	ErrInvalidBody        = errors.New("invalid body")
 	ErrSignupDisabled     = errors.New("signup disabled")
 	ErrAccountPending     = errors.New("account pending")
 	ErrLdapDisabled       = errors.New("ldap disabled")
+	ErrKerberosDisabled   = errors.New("kerberos disabled")
 )
 
 type Embedder interface {
@@ -47,6 +49,9 @@ type Account struct {
 	AccessLevel int
 	Pending     bool
 	CreatedAt   time.Time
+	RoleIDs     []string
+	RoleTitles  []string
+	Permissions []string
 }
 
 type LoginResult struct {
@@ -59,14 +64,17 @@ type LoginResult struct {
 }
 
 type DocumentLine struct {
-	DocumentID  string
-	Title       string
-	Edition     string
-	AccessLevel int
-	Scope       string
-	OwnerID     string
-	OwnerName   string
-	UploadedAt  time.Time
+	DocumentID   string
+	Title        string
+	Edition      string
+	AccessLevel  int
+	Scope        string
+	OwnerID      string
+	OwnerName    string
+	UploadedAt   time.Time
+	ProcessID    string
+	VisibleToAll bool
+	RoleIDs      []string
 }
 
 type DocumentFile struct {
@@ -130,15 +138,33 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 		return err
 	}
 	schema = strings.ReplaceAll(schema, "vector(768)", fmt.Sprintf("vector(%d)", store.dimensions))
-	_, err = store.pool.Exec(ctx, schema)
-	return err
+	if _, err = store.pool.Exec(ctx, schema); err != nil {
+		return err
+	}
+	if err = store.seed_DefaultProcess(ctx); err != nil {
+		return err
+	}
+	return store.seed_Roles(ctx)
 }
 
 func read_MigrationSQL() (string, error) {
+	var builder strings.Builder
+	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql"} {
+		raw, err := read_MigrationFile(name)
+		if err != nil {
+			return "", err
+		}
+		builder.WriteString(raw)
+		builder.WriteByte('\n')
+	}
+	return builder.String(), nil
+}
+
+func read_MigrationFile(name string) (string, error) {
 	candidates := []string{
-		"migrations/001_init.sql",
-		"source/core/migrations/001_init.sql",
-		"../../migrations/001_init.sql",
+		"migrations/" + name,
+		"source/core/migrations/" + name,
+		"../../migrations/" + name,
 	}
 	for _, candidate := range candidates {
 		raw, err := os.ReadFile(candidate)
@@ -146,7 +172,7 @@ func read_MigrationSQL() (string, error) {
 			return string(raw), nil
 		}
 	}
-	return "", errors.New("migrations/001_init.sql")
+	return "", errors.New("migrations/" + name)
 }
 
 func (store *LiveStore) next_ID(ctx context.Context, name string) (int, error) {

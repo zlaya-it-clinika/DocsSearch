@@ -20,6 +20,7 @@ import (
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/draftcheck"
+	"docssearch/core/internal/source"
 	"docssearch/core/internal/texts"
 )
 
@@ -38,30 +39,51 @@ type userRecord struct {
 	accessLevel int
 	pending     bool
 	createdAt   time.Time
+	roleIDs     []string
 }
 
 type documentRecord struct {
-	id          string
-	title       string
-	edition     string
-	accessLevel int
-	scope       string
-	ownerID     string
-	uploadedAt  time.Time
-	fileName    string
-	contentType string
-	body        []byte
+	id           string
+	title        string
+	edition      string
+	accessLevel  int
+	scope        string
+	processID    string
+	ownerID      string
+	uploadedAt   time.Time
+	fileName     string
+	contentType  string
+	body         []byte
+	visibleToAll bool
+	roleIDs      []string
+}
+
+type processRecord struct {
+	id            string
+	title         string
+	selectPrompt  string
+	answerPrompt  string
+	clarifyPrompt string
 }
 
 type sessionRecord struct {
-	id           string
-	ownerID      string
-	title        string
-	createdAt    time.Time
-	updatedAt    time.Time
-	messages     []any
-	templateStep int
-	blankFill    blank.FillState
+	id                string
+	ownerID           string
+	title             string
+	createdAt         time.Time
+	updatedAt         time.Time
+	messages          []any
+	templateStep      int
+	blankFill         blank.FillState
+	attachmentsByID   map[string]*attachmentRecord
+	draftAttachmentID string
+}
+
+type attachmentRecord struct {
+	id         string
+	fileName   string
+	plainText  string
+	characters int
 }
 
 type citation struct {
@@ -106,11 +128,37 @@ type assistantReply struct {
 	Citations        []citation      `json:"citations"`
 	Contacts         *[]replyContact `json:"contacts,omitempty"`
 	Template         *templateState  `json:"template,omitempty"`
+	Draft            *draftState     `json:"draft,omitempty"`
+}
+
+type messageAttachment struct {
+	AttachmentID string `json:"attachmentId"`
+	FileName     string `json:"fileName"`
+}
+
+type draftChange struct {
+	Text     string    `json:"text"`
+	Citation *citation `json:"citation,omitempty"`
+}
+
+type draftState struct {
+	AttachmentID string        `json:"attachmentId"`
+	Title        string        `json:"title"`
+	DraftText    string        `json:"draftText"`
+	Changes      []draftChange `json:"changes"`
+	DraftLink    string        `json:"draftLink"`
+}
+
+type attachmentResponse struct {
+	AttachmentID string `json:"attachmentId"`
+	FileName     string `json:"fileName"`
+	Characters   int    `json:"characters"`
 }
 
 type userLine struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Role        string              `json:"role"`
+	Text        string              `json:"text"`
+	Attachments []messageAttachment `json:"attachments,omitempty"`
 }
 
 type loginResponse struct {
@@ -123,20 +171,23 @@ type loginResponse struct {
 }
 
 type profileResponse struct {
-	UserID      string `json:"userId"`
-	Login       string `json:"login"`
-	DisplayName string `json:"displayName"`
-	AccessLevel int    `json:"accessLevel"`
-	Role        string `json:"role"`
+	UserID      string        `json:"userId"`
+	Login       string        `json:"login"`
+	DisplayName string        `json:"displayName"`
+	AccessLevel int           `json:"accessLevel"`
+	Role        string        `json:"role"`
+	Roles       []profileRole `json:"roles"`
+	Permissions []string      `json:"permissions"`
 }
 
 type accountResponse struct {
-	UserID      string `json:"userId"`
-	Login       string `json:"login"`
-	DisplayName string `json:"displayName"`
-	AccessLevel int    `json:"accessLevel"`
-	Role        string `json:"role"`
-	CreatedAt   string `json:"createdAt"`
+	UserID      string   `json:"userId"`
+	Login       string   `json:"login"`
+	DisplayName string   `json:"displayName"`
+	AccessLevel int      `json:"accessLevel"`
+	Role        string   `json:"role"`
+	RoleIDs     []string `json:"roleIds"`
+	CreatedAt   string   `json:"createdAt"`
 }
 
 type sessionLine struct {
@@ -144,18 +195,23 @@ type sessionLine struct {
 	Title     string `json:"title"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
+	CanRename bool   `json:"canRename"`
+	CanDelete bool   `json:"canDelete"`
 }
 
 type documentResponse struct {
-	DocumentID  string `json:"documentId"`
-	Title       string `json:"title"`
-	Edition     string `json:"edition"`
-	AccessLevel int    `json:"accessLevel"`
-	Scope       string `json:"scope"`
-	OwnerID     string `json:"ownerId"`
-	OwnerName   string `json:"ownerName"`
-	UploadedAt  string `json:"uploadedAt"`
-	CanDelete   bool   `json:"canDelete"`
+	DocumentID   string   `json:"documentId"`
+	Title        string   `json:"title"`
+	Edition      string   `json:"edition"`
+	AccessLevel  int      `json:"accessLevel"`
+	Scope        string   `json:"scope"`
+	ProcessID    string   `json:"processId"`
+	OwnerID      string   `json:"ownerId"`
+	OwnerName    string   `json:"ownerName"`
+	UploadedAt   string   `json:"uploadedAt"`
+	VisibleToAll bool     `json:"visibleToAll"`
+	RoleIDs      []string `json:"roleIds"`
+	CanDelete    bool     `json:"canDelete"`
 }
 
 type uploadResponse struct {
@@ -163,6 +219,25 @@ type uploadResponse struct {
 	Status     string `json:"status"`
 	Edition    string `json:"edition"`
 	Scope      string `json:"scope"`
+	ProcessID  string `json:"processId"`
+}
+
+type importResponse struct {
+	Documents []uploadResponse `json:"documents"`
+	Skipped   []string         `json:"skipped"`
+}
+
+type processLine struct {
+	ProcessID string `json:"processId"`
+	Title     string `json:"title"`
+}
+
+type processDetail struct {
+	ProcessID     string `json:"processId"`
+	Title         string `json:"title"`
+	SelectPrompt  string `json:"selectPrompt"`
+	AnswerPrompt  string `json:"answerPrompt"`
+	ClarifyPrompt string `json:"clarifyPrompt"`
 }
 
 type shownDocument struct {
@@ -182,21 +257,30 @@ type auditEntry struct {
 }
 
 type stub struct {
-	mu            sync.Mutex
-	users         []*userRecord
-	usersByID     map[string]*userRecord
-	usersByLogin  map[string]*userRecord
-	tokens        map[string]string
-	documents     []*documentRecord
-	documentsByID map[string]*documentRecord
-	sessions      map[string]*sessionRecord
-	draftsByID    map[string]*draftFile
-	audit         []auditEntry
-	nextUser      int
-	nextDocument  int
-	nextSession   int
-	nextDraft     int
-	nextAudit     int
+	mu                  sync.Mutex
+	users               []*userRecord
+	usersByID           map[string]*userRecord
+	usersByLogin        map[string]*userRecord
+	tokens              map[string]string
+	documents           []*documentRecord
+	documentsByID       map[string]*documentRecord
+	sessions            map[string]*sessionRecord
+	draftsByID          map[string]*draftFile
+	processes           []*processRecord
+	processesByID       map[string]*processRecord
+	audit               []auditEntry
+	roles               []*roleRecord
+	rolesByID           map[string]*roleRecord
+	permissionEvents    []permissionEvent
+	nextUser            int
+	nextDocument        int
+	nextSession         int
+	nextDraft           int
+	nextAttachment      int
+	nextProcess         int
+	nextAudit           int
+	nextRole            int
+	nextPermissionEvent int
 	// Настройки входа живут в памяти, как и остальные данные заглушки
 	signupSettings auth.SignupSettings
 	ldapSettings   auth.LdapSettings
@@ -205,26 +289,38 @@ type stub struct {
 // withoutUsers: старт без admin/admin и user/user, первая регистрация создаёт администратора
 func create_StubStore(withoutUsers bool, authDefaults auth.Settings) *stub {
 	stubStore := &stub{
-		usersByID:      map[string]*userRecord{},
-		usersByLogin:   map[string]*userRecord{},
-		tokens:         map[string]string{},
-		documentsByID:  map[string]*documentRecord{},
-		sessions:       map[string]*sessionRecord{},
-		draftsByID:     map[string]*draftFile{},
-		nextUser:       2,
-		nextDocument:   3,
-		nextSession:    1,
-		nextDraft:      1,
-		nextAudit:      1,
-		signupSettings: authDefaults.Signup,
-		ldapSettings:   authDefaults.Ldap,
+		usersByID:           map[string]*userRecord{},
+		usersByLogin:        map[string]*userRecord{},
+		tokens:              map[string]string{},
+		documentsByID:       map[string]*documentRecord{},
+		sessions:            map[string]*sessionRecord{},
+		draftsByID:          map[string]*draftFile{},
+		processesByID:       map[string]*processRecord{},
+		nextUser:            2,
+		nextDocument:        3,
+		nextSession:         1,
+		nextDraft:           1,
+		nextAttachment:      1,
+		nextProcess:         1,
+		nextAudit:           1,
+		nextRole:            1,
+		nextPermissionEvent: 1,
+		rolesByID:           map[string]*roleRecord{},
+		signupSettings:      authDefaults.Signup,
+		ldapSettings:        authDefaults.Ldap,
 	}
+	stubStore.seed_Roles()
 	if withoutUsers {
 		stubStore.nextUser = 1
 	} else {
-		stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
-		stubStore.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
+		admin := stubStore.addUser(texts.SeedAdminID, texts.SeedAdminLogin, texts.SeedAdminPassword, texts.SeedAdminDisplayName, texts.SeedAdminAccessLevel)
+		employee := stubStore.addUser(texts.SeedEmployeeID, texts.SeedEmployeeLogin, texts.SeedEmployeePassword, texts.SeedEmployeeDisplayName, texts.SeedEmployeeAccessLevel)
+		admin.roleIDs = []string{texts.RoleIDChief}
+		employee.roleIDs = []string{texts.RoleIDUser}
+		stubStore.sync_Access(admin)
+		stubStore.sync_Access(employee)
 	}
+	stubStore.add_DefaultProcess()
 	stubStore.addDocument(texts.SeedInstructionID, texts.SeedInstructionTitle, texts.EditionDefault, texts.SeedDocumentAccessOpen, texts.SeedInstructionFileName, texts.PlainTextContentType, []byte(texts.SeedInstructionBody))
 	stubStore.addDocument(texts.SeedRestrictedID, texts.SeedRestrictedTitle, texts.EditionDefault, texts.SeedDocumentAccessClosed, texts.SeedRestrictedFileName, texts.PlainTextContentType, []byte(texts.SeedRestrictedBody))
 	return stubStore
@@ -251,10 +347,14 @@ func (stubStore *stub) find_UserByLogin(login string) *userRecord {
 }
 
 func (stubStore *stub) create_NextUser(login, password, displayName string, accessLevel int, pending bool) *userRecord {
+	usersBefore := len(stubStore.users)
 	userID := "user-" + strconv.Itoa(stubStore.nextUser)
 	stubStore.nextUser++
 	record := stubStore.addUser(userID, login, password, displayName, accessLevel)
 	record.pending = pending
+	record.roleIDs = []string{auth.RoleID_ForNewAccount(usersBefore, accessLevel, pending)}
+	stubStore.sync_Access(record)
+	stubStore.append_PermissionEvent(record.id, texts.PermissionActionAssign, record.roleIDs[0], record.id)
 	return record
 }
 
@@ -265,13 +365,47 @@ func (stubStore *stub) addDocument(id, title, edition string, accessLevel int, f
 		edition:     edition,
 		accessLevel: accessLevel,
 		scope:       texts.ScopeGlobal,
+		processID:   texts.ProcessDocuments,
 		uploadedAt:  time.Now().UTC(),
 		fileName:    fileName,
 		contentType: contentType,
 		body:        body,
 	}
+	if accessLevel >= texts.SeedAdminAccessLevel {
+		record.visibleToAll = false
+		record.roleIDs = []string{texts.RoleIDAdmin, texts.RoleIDChief}
+	} else {
+		record.visibleToAll = true
+		record.roleIDs = []string{}
+	}
 	stubStore.documents = append(stubStore.documents, record)
 	stubStore.documentsByID[id] = record
+}
+
+func (stubStore *stub) add_DefaultProcess() {
+	stubStore.store_Process(&processRecord{
+		id:            texts.ProcessDocuments,
+		title:         texts.ProcessTitleDocuments,
+		selectPrompt:  texts.LiveSelectPrompt,
+		answerPrompt:  texts.LiveAnswerPrompt,
+		clarifyPrompt: texts.LiveClarifyPrompt,
+	})
+}
+
+func (stubStore *stub) store_Process(process *processRecord) {
+	stubStore.processes = append(stubStore.processes, process)
+	stubStore.processesByID[process.id] = process
+}
+
+func (stubStore *stub) resolve_UploadProcess(raw string) (string, bool) {
+	processID := strings.TrimSpace(raw)
+	if processID == "" {
+		processID = texts.ProcessDocuments
+	}
+	if stubStore.processesByID[processID] == nil {
+		return "", false
+	}
+	return processID, true
 }
 
 func (stubStore *stub) register_StubRoutes() *http.ServeMux {
@@ -281,6 +415,7 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("GET /auth/config", stubStore.serve_AuthConfig)
 	routeMux.HandleFunc("POST /auth/signup", stubStore.serve_Signup)
 	routeMux.HandleFunc("POST /auth/ldap", stubStore.serve_LdapLogin)
+	routeMux.HandleFunc("POST /auth/kerberos", stubStore.serve_KerberosLogin)
 	routeMux.HandleFunc("GET /auth/admin/details", stubStore.serve_AdminDetails)
 	routeMux.HandleFunc("GET /auth/admin/config", stubStore.serve_SignupSettings)
 	routeMux.HandleFunc("POST /auth/admin/config", stubStore.serve_SaveSignupSettings)
@@ -289,12 +424,23 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("GET /auth/admin/config/ldap/server", stubStore.serve_LdapServer)
 	routeMux.HandleFunc("POST /auth/admin/config/ldap/server", stubStore.serve_SaveLdapServer)
 	routeMux.HandleFunc("GET /me", stubStore.serve_CurrentUser)
+	routeMux.HandleFunc("GET /permissions", stubStore.serve_ListPermissions)
+	routeMux.HandleFunc("GET /roles", stubStore.serve_ListRoles)
+	routeMux.HandleFunc("POST /roles", stubStore.serve_CreateRole)
+	routeMux.HandleFunc("PATCH /roles/{roleId}", stubStore.serve_UpdateRole)
+	routeMux.HandleFunc("DELETE /roles/{roleId}", stubStore.serve_DeleteRole)
 	routeMux.HandleFunc("POST /sessions", stubStore.serve_CreateSession)
 	routeMux.HandleFunc("GET /sessions", stubStore.serve_ListSessions)
 	routeMux.HandleFunc("GET /sessions/{sessionId}", stubStore.serve_SessionHistory)
+	routeMux.HandleFunc("PATCH /sessions/{sessionId}", stubStore.serve_RenameSession)
+	routeMux.HandleFunc("DELETE /sessions/{sessionId}", stubStore.serve_DeleteSession)
 	routeMux.HandleFunc("POST /sessions/{sessionId}/messages", stubStore.serve_SessionMessage)
+	routeMux.HandleFunc("POST /sessions/{sessionId}/attachments", stubStore.serve_SessionAttachment)
 	routeMux.HandleFunc("GET /documents", stubStore.serve_ListDocuments)
 	routeMux.HandleFunc("POST /documents", stubStore.serve_UploadDocument)
+	routeMux.HandleFunc("POST /documents/import", stubStore.serve_ImportDocuments)
+	routeMux.HandleFunc("GET /processes", stubStore.serve_ListProcesses)
+	routeMux.HandleFunc("POST /processes", stubStore.serve_CreateProcess)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", stubStore.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /blanks/{blankId}/file", stubStore.serve_BlankFile)
@@ -303,6 +449,7 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("POST /users", stubStore.serve_CreateUser)
 	routeMux.HandleFunc("PATCH /users/{userId}", stubStore.serve_PatchUser)
 	routeMux.HandleFunc("GET /audit", stubStore.serve_Audit)
+	routeMux.HandleFunc("GET /audit/permissions", stubStore.serve_PermissionAudit)
 	routeMux.HandleFunc("POST /drafts/check", stubStore.serve_DraftCheck)
 	return routeMux
 }
@@ -361,13 +508,7 @@ func (stubStore *stub) serve_CurrentUser(responseWriter http.ResponseWriter, req
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, profileResponse{
-		UserID:      record.id,
-		Login:       record.login,
-		DisplayName: record.displayName,
-		AccessLevel: record.accessLevel,
-		Role:        record.role(),
-	})
+	write_JSONResponse(responseWriter, http.StatusOK, stubStore.profile_Of(record))
 }
 
 func (stubStore *stub) serve_CreateSession(responseWriter http.ResponseWriter, request *http.Request) {
@@ -382,11 +523,12 @@ func (stubStore *stub) serve_CreateSession(responseWriter http.ResponseWriter, r
 	stubStore.nextSession++
 	now := time.Now().UTC()
 	stubStore.sessions[sessionID] = &sessionRecord{
-		id:        sessionID,
-		ownerID:   record.id,
-		createdAt: now,
-		updatedAt: now,
-		messages:  []any{},
+		id:              sessionID,
+		ownerID:         record.id,
+		createdAt:       now,
+		updatedAt:       now,
+		messages:        []any{},
+		attachmentsByID: map[string]*attachmentRecord{},
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
@@ -434,7 +576,9 @@ func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, 
 
 func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
-		Text string `json:"text"`
+		Text          string   `json:"text"`
+		ProcessID     string   `json:"processId"`
+		AttachmentIDs []string `json:"attachmentIds"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
@@ -451,10 +595,54 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		return
 	}
 	record := stubStore.usersByID[session.ownerID]
-	reply, step, replyError := build_AssistantReply(session, body.Text)
-	if replyError != nil {
-		write_DraftError(responseWriter, replyError)
+	permissions := stubStore.permissions_Of(record)
+	if strings.TrimSpace(body.ProcessID) != "" && stubStore.processesByID[strings.TrimSpace(body.ProcessID)] == nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
+	}
+	var reply assistantReply
+	var step blank.Step
+	var turnAttachments []messageAttachment
+	handled := false
+	if auth.Has_Permission(permissions, texts.PermissionTemplatesUse) {
+		step, handled = blank.Advance_Blank(session.blankFill, body.Text)
+	}
+	if handled {
+		if !auth.Has_Permission(permissions, texts.PermissionChatUse) {
+			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+			return
+		}
+		apply_BlankStep(session, step)
+		reply = reply_FromBlank(step)
+	} else {
+		source, revising, sourceError := session.revision_Source(body.AttachmentIDs)
+		if sourceError != nil {
+			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+			return
+		}
+		if revising {
+			if !auth.Has_Permission(permissions, texts.PermissionDraftsAssist) {
+				write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+				return
+			}
+			var reviseError error
+			reply, turnAttachments, reviseError = stubStore.finish_StubRevision(session, source)
+			if reviseError != nil {
+				write_ErrorResponse(responseWriter, http.StatusInternalServerError, texts.ErrorStore)
+				return
+			}
+		} else {
+			if !auth.Has_Permission(permissions, texts.PermissionChatUse) {
+				write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+				return
+			}
+			var replyError error
+			reply, step, replyError = build_AssistantReply(session, body.Text, false)
+			if replyError != nil {
+				write_DraftError(responseWriter, replyError)
+				return
+			}
+		}
 	}
 	if step.Ready && len(step.DraftDocx) > 0 && reply.Template != nil {
 		draftID := stubStore.save_DraftFile(record.id, step.BlankID+".docx", step.DraftDocx)
@@ -467,7 +655,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		session.title = build_SessionTitle(body.Text)
 	}
 	session.updatedAt = time.Now().UTC()
-	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text})
+	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text, Attachments: turnAttachments})
 	stored := reply
 	stored.Role = "assistant"
 	session.messages = append(session.messages, stored)
@@ -488,24 +676,32 @@ func (stubStore *stub) serve_ListDocuments(responseWriter http.ResponseWriter, r
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	if scopeFilter == texts.ScopeAll && record.accessLevel < adminAccessLevel {
+	if scopeFilter == texts.ScopeAll && !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionPersonalViewAll) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	processFilter := strings.TrimSpace(request.URL.Query().Get("process"))
+	if processFilter != "" && stubStore.processesByID[processFilter] == nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
 	visible := make([]documentResponse, 0)
 	for _, document := range stubStore.documents {
-		if !document_MatchesList(scopeFilter, document.scope, document.ownerID, record.id, document.accessLevel, record.accessLevel) {
+		if processFilter != "" && document.processID != processFilter {
 			continue
 		}
-		visible = append(visible, document.line(record, stubStore.ownerName(document)))
+		if !document_MatchesList(scopeFilter, document.scope, document.ownerID, record.id, document.visibleToAll, document.roleIDs, record.roleIDs) {
+			continue
+		}
+		visible = append(visible, document.line(record, stubStore.ownerName(document), stubStore.permissions_Of(record)))
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		CanUploadGlobal   bool               `json:"canUploadGlobal"`
 		CanUploadPersonal bool               `json:"canUploadPersonal"`
 		Documents         []documentResponse `json:"documents"`
 	}{
-		CanUploadGlobal:   check_CanUploadGlobal(record.accessLevel),
-		CanUploadPersonal: true,
+		CanUploadGlobal:   auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionGlobalManage),
+		CanUploadPersonal: auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionPersonalUpload),
 		Documents:         visible,
 	})
 }
@@ -534,23 +730,20 @@ func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, 
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	scope, scopeOK := read_UploadScope(request.FormValue("scope"), record.accessLevel)
+	permissions := stubStore.permissions_Of(record)
+	scope, scopeOK := read_UploadScope(request.FormValue("scope"), auth.Has_Permission(permissions, texts.PermissionGlobalManage))
 	if !scopeOK {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
-	if scope == texts.ScopeGlobal && !check_CanUploadGlobal(record.accessLevel) {
+	if !allow_Upload(permissions, scope) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
-	accessLevel := record.accessLevel
-	if scope == texts.ScopeGlobal {
-		parsed, levelOK := read_AccessLevel(request.FormValue("accessLevel"), texts.SeedDocumentAccessOpen)
-		if !levelOK {
-			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-			return
-		}
-		accessLevel = parsed
+	accessLevel, visibleToAll, roleIDs, audienceOK := read_UploadAudience(request.Form["roleIds"], request.FormValue("accessLevel"), record.accessLevel, scope == texts.ScopePersonal)
+	if !audienceOK || !stubStore.known_RoleIDs(roleIDs) {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
 	}
 	cleanName := filepath.Base(fileName)
 	if cleanName == "" || cleanName == "." {
@@ -560,6 +753,15 @@ func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, 
 	if scope == texts.ScopePersonal {
 		ownerID = record.id
 	}
+	processID, processOK := stubStore.resolve_UploadProcess(request.FormValue("process"))
+	if !processOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, stubStore.store_Document(title, edition, accessLevel, scope, ownerID, processID, cleanName, contentType, body, visibleToAll, roleIDs))
+}
+
+func (stubStore *stub) store_Document(title, edition string, accessLevel int, scope, ownerID, processID, fileName, contentType string, body []byte, visibleToAll bool, roleIDs []string) uploadResponse {
 	now := time.Now().UTC()
 	for _, document := range stubStore.documents {
 		if !same_DocumentTitle(document, title, scope, ownerID) {
@@ -567,39 +769,169 @@ func (stubStore *stub) serve_UploadDocument(responseWriter http.ResponseWriter, 
 		}
 		document.edition = edition
 		document.accessLevel = accessLevel
-		document.fileName = cleanName
+		document.processID = processID
+		document.fileName = fileName
 		document.contentType = contentType
 		document.body = body
 		document.uploadedAt = now
-		write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
+		document.visibleToAll = visibleToAll
+		document.roleIDs = copy_Strings(roleIDs)
+		return uploadResponse{
 			DocumentID: document.id,
 			Status:     texts.StatusAccepted,
 			Edition:    document.edition,
 			Scope:      document.scope,
-		})
-		return
+			ProcessID:  document.processID,
+		}
 	}
 	documentID := "doc-" + strconv.Itoa(stubStore.nextDocument)
 	stubStore.nextDocument++
 	created := &documentRecord{
-		id:          documentID,
-		title:       title,
-		edition:     edition,
-		accessLevel: accessLevel,
-		scope:       scope,
-		ownerID:     ownerID,
-		uploadedAt:  now,
-		fileName:    cleanName,
-		contentType: contentType,
-		body:        body,
+		id:           documentID,
+		title:        title,
+		edition:      edition,
+		accessLevel:  accessLevel,
+		scope:        scope,
+		processID:    processID,
+		ownerID:      ownerID,
+		uploadedAt:   now,
+		fileName:     fileName,
+		contentType:  contentType,
+		body:         body,
+		visibleToAll: visibleToAll,
+		roleIDs:      copy_Strings(roleIDs),
 	}
 	stubStore.documents = append(stubStore.documents, created)
 	stubStore.documentsByID[documentID] = created
-	write_JSONResponse(responseWriter, http.StatusOK, uploadResponse{
+	return uploadResponse{
 		DocumentID: documentID,
 		Status:     texts.StatusAccepted,
 		Edition:    edition,
 		Scope:      scope,
+		ProcessID:  processID,
+	}
+}
+
+func (stubStore *stub) serve_ImportDocuments(responseWriter http.ResponseWriter, request *http.Request) {
+	request.Body = http.MaxBytesReader(responseWriter, request.Body, maxUploadBytes)
+	if err := request.ParseMultipartForm(maxUploadBytes); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	listing, err := source.Read_Folder(request.FormValue("path"))
+	if err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	edition := strings.TrimSpace(request.FormValue("edition"))
+	if edition == "" {
+		edition = texts.EditionDefault
+	}
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	permissions := stubStore.permissions_Of(record)
+	scope, scopeOK := read_UploadScope(request.FormValue("scope"), auth.Has_Permission(permissions, texts.PermissionGlobalManage))
+	if !scopeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	if !allow_Upload(permissions, scope) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	accessLevel, visibleToAll, roleIDs, audienceOK := read_UploadAudience(request.Form["roleIds"], request.FormValue("accessLevel"), record.accessLevel, scope == texts.ScopePersonal)
+	if !audienceOK || !stubStore.known_RoleIDs(roleIDs) {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	ownerID := ""
+	if scope == texts.ScopePersonal {
+		ownerID = record.id
+	}
+	processID, processOK := stubStore.resolve_UploadProcess(request.FormValue("process"))
+	if !processOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	imported := make([]uploadResponse, 0, len(listing.Files))
+	for _, file := range listing.Files {
+		imported = append(imported, stubStore.store_Document(file.Name, edition, accessLevel, scope, ownerID, processID, file.Name, contentType_ForFile(file.Name), file.Body, visibleToAll, roleIDs))
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, importResponse{Documents: imported, Skipped: listing.Skipped})
+}
+
+func (stubStore *stub) serve_ListProcesses(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	if _, found := stubStore.find_UserByBearerToken(request); !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	lines := make([]processLine, 0, len(stubStore.processes))
+	for _, process := range stubStore.processes {
+		lines = append(lines, processLine{ProcessID: process.id, Title: process.title})
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, struct {
+		Processes []processLine `json:"processes"`
+	}{Processes: lines})
+}
+
+func (stubStore *stub) serve_CreateProcess(responseWriter http.ResponseWriter, request *http.Request) {
+	var body struct {
+		Title         string `json:"title"`
+		SelectPrompt  string `json:"selectPrompt"`
+		AnswerPrompt  string `json:"answerPrompt"`
+		ClarifyPrompt string `json:"clarifyPrompt"`
+	}
+	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionUsersManage) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	fallback := stubStore.processesByID[texts.ProcessDocuments]
+	selectPrompt := texts.LiveSelectPrompt
+	answerPrompt := texts.LiveAnswerPrompt
+	clarifyPrompt := texts.LiveClarifyPrompt
+	if fallback != nil {
+		selectPrompt = fallback.selectPrompt
+		answerPrompt = fallback.answerPrompt
+		clarifyPrompt = fallback.clarifyPrompt
+	}
+	created := &processRecord{
+		id:            "process-" + strconv.Itoa(stubStore.nextProcess),
+		title:         title,
+		selectPrompt:  prompt_OrText(body.SelectPrompt, selectPrompt),
+		answerPrompt:  prompt_OrText(body.AnswerPrompt, answerPrompt),
+		clarifyPrompt: prompt_OrText(body.ClarifyPrompt, clarifyPrompt),
+	}
+	stubStore.nextProcess++
+	stubStore.store_Process(created)
+	write_JSONResponse(responseWriter, http.StatusOK, processDetail{
+		ProcessID:     created.id,
+		Title:         created.title,
+		SelectPrompt:  created.selectPrompt,
+		AnswerPrompt:  created.answerPrompt,
+		ClarifyPrompt: created.clarifyPrompt,
 	})
 }
 
@@ -616,7 +948,7 @@ func (stubStore *stub) serve_DocumentFile(responseWriter http.ResponseWriter, re
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
-	if status := document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel); status != http.StatusOK {
+	if status := document_ReadStatus(record.id, stubStore.permissions_Of(record), record.roleIDs, document.scope, document.ownerID, document.visibleToAll, document.roleIDs); status != http.StatusOK {
 		if status == http.StatusNotFound {
 			write_ErrorResponse(responseWriter, status, texts.ErrorNotFound)
 			return
@@ -644,7 +976,7 @@ func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, 
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 		return
 	}
-	if status := document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel); status != http.StatusOK {
+	if status := document_ReadStatus(record.id, stubStore.permissions_Of(record), record.roleIDs, document.scope, document.ownerID, document.visibleToAll, document.roleIDs); status != http.StatusOK {
 		if status == http.StatusNotFound {
 			write_ErrorResponse(responseWriter, status, texts.ErrorNotFound)
 			return
@@ -652,7 +984,7 @@ func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, 
 		write_ErrorResponse(responseWriter, status, texts.ErrorAccessDenied)
 		return
 	}
-	if !check_CanDeleteDocument(record.id, record.accessLevel, document.scope, document.ownerID) {
+	if !check_CanDeleteDocument(record.id, stubStore.permissions_Of(record), document.scope, document.ownerID) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
@@ -742,7 +1074,7 @@ func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, reque
 	// Свою роль администратор не меняет, как в боевом режиме
 	levelChanges := patch.AccessLevel != nil && *patch.AccessLevel != record.accessLevel
 	pendingChanges := patch.Pending != nil && *patch.Pending != record.pending
-	if actor.id == record.id && (levelChanges || pendingChanges) {
+	if actor.id == record.id && (levelChanges || pendingChanges || patch.RoleIDs != nil) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
@@ -768,13 +1100,31 @@ func (stubStore *stub) serve_PatchUser(responseWriter http.ResponseWriter, reque
 	if patch.Pending != nil {
 		record.pending = *patch.Pending
 	}
+	if patch.RoleIDs != nil || levelChanges || pendingChanges {
+		next := []string{auth.RoleID_ForNewAccount(1, record.accessLevel, record.pending)}
+		if patch.RoleIDs != nil {
+			next = *patch.RoleIDs
+		}
+		if !stubStore.known_RoleIDs(next) {
+			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+			return
+		}
+		if stubStore.chiefs_After(record.id, next) == 0 {
+			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+			return
+		}
+		oldRoles := copy_Strings(record.roleIDs)
+		record.roleIDs = copy_Strings(next)
+		stubStore.sync_Access(record)
+		stubStore.record_RoleDiff(actor.id, record.id, oldRoles, record.roleIDs)
+	}
 	write_JSONResponse(responseWriter, http.StatusOK, record.account())
 }
 
 func (stubStore *stub) serve_Audit(responseWriter http.ResponseWriter, request *http.Request) {
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	if _, found := stubStore.require_AdminUser(responseWriter, request); !found {
+	if _, found := stubStore.require_Permission(responseWriter, request, texts.PermissionAuditView); !found {
 		return
 	}
 	entries := stubStore.audit
@@ -794,8 +1144,13 @@ func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, requ
 	}
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	if _, found := stubStore.find_UserByBearerToken(request); !found {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionDraftsCheck) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
 	recommendations, err := recommendations_ForDraft(fileName, body, draftcheck.Source{
@@ -887,7 +1242,7 @@ func (stubStore *stub) require_AdminUser(responseWriter http.ResponseWriter, req
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccountPending)
 		return nil, false
 	}
-	if record.accessLevel < adminAccessLevel {
+	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionUsersManage) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return nil, false
 	}
@@ -936,6 +1291,7 @@ func (record *userRecord) account() accountResponse {
 		DisplayName: record.displayName,
 		AccessLevel: record.accessLevel,
 		Role:        record.role(),
+		RoleIDs:     copy_Strings(record.roleIDs),
 		CreatedAt:   record.createdAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -950,6 +1306,8 @@ func (session *sessionRecord) line() sessionLine {
 		Title:     session.title,
 		CreatedAt: session.createdAt.UTC().Format(time.RFC3339),
 		UpdatedAt: session.updatedAt.UTC().Format(time.RFC3339),
+		CanRename: true,
+		CanDelete: true,
 	}
 }
 
@@ -964,17 +1322,20 @@ func build_SessionTitle(text string) string {
 	return strings.TrimSpace(string(runes[:titleRuneLimit-3])) + "..."
 }
 
-func (document *documentRecord) line(viewer *userRecord, ownerName string) documentResponse {
+func (document *documentRecord) line(viewer *userRecord, ownerName string, permissions []string) documentResponse {
 	return documentResponse{
-		DocumentID:  document.id,
-		Title:       document.title,
-		Edition:     document.edition,
-		AccessLevel: document.accessLevel,
-		Scope:       document.scope,
-		OwnerID:     document.ownerID,
-		OwnerName:   ownerName,
-		UploadedAt:  document.uploadedAt.UTC().Format(time.RFC3339),
-		CanDelete:   check_CanDeleteDocument(viewer.id, viewer.accessLevel, document.scope, document.ownerID),
+		DocumentID:   document.id,
+		Title:        document.title,
+		Edition:      document.edition,
+		AccessLevel:  document.accessLevel,
+		Scope:        document.scope,
+		ProcessID:    document.processID,
+		OwnerID:      document.ownerID,
+		OwnerName:    ownerName,
+		UploadedAt:   document.uploadedAt.UTC().Format(time.RFC3339),
+		VisibleToAll: document.visibleToAll,
+		RoleIDs:      copy_Strings(document.roleIDs),
+		CanDelete:    check_CanDeleteDocument(viewer.id, permissions, document.scope, document.ownerID),
 	}
 }
 
@@ -987,7 +1348,7 @@ func (stubStore *stub) lookup_Contacts(record *userRecord, question string) []re
 		if document == nil || !contacts.Title_IsDirectory(document.title) {
 			continue
 		}
-		if document_ReadStatus(record.id, record.accessLevel, document.scope, document.ownerID, document.accessLevel) != http.StatusOK {
+		if document_ReadStatus(record.id, stubStore.permissions_Of(record), record.roleIDs, document.scope, document.ownerID, document.visibleToAll, document.roleIDs) != http.StatusOK {
 			continue
 		}
 		plain, extractError := chunk.Extract_DocumentText(document.fileName, document.body)
@@ -1000,11 +1361,13 @@ func (stubStore *stub) lookup_Contacts(record *userRecord, question string) []re
 }
 
 // Пока бланк заполняется, реплика - ответ на поле, а не новая фраза заглушки.
-func build_AssistantReply(session *sessionRecord, text string) (assistantReply, blank.Step, error) {
-	step, handled := blank.Advance_Blank(session.blankFill, text)
-	if handled {
-		apply_BlankStep(session, step)
-		return reply_FromBlank(step), step, nil
+func build_AssistantReply(session *sessionRecord, text string, allowBlank bool) (assistantReply, blank.Step, error) {
+	if allowBlank {
+		step, handled := blank.Advance_Blank(session.blankFill, text)
+		if handled {
+			apply_BlankStep(session, step)
+			return reply_FromBlank(step), step, nil
+		}
 	}
 	lower := strings.ToLower(text)
 	switch {
@@ -1072,8 +1435,13 @@ func (stubStore *stub) save_DraftFile(ownerID, fileName string, body []byte) str
 func (stubStore *stub) serve_BlankFile(responseWriter http.ResponseWriter, request *http.Request) {
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	if _, found := stubStore.find_UserByBearerToken(request); !found {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionTemplatesUse) {
+		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
 	fileName, body, err := blank.Read_ModuleFile(request.PathValue("blankId"))
@@ -1190,6 +1558,19 @@ func read_UploadedFile(responseWriter http.ResponseWriter, request *http.Request
 		contentType = http.DetectContentType(body)
 	}
 	return header.Filename, body, contentType, nil
+}
+
+func contentType_ForFile(fileName string) string {
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".txt":
+		return texts.PlainTextContentType
+	case ".docx":
+		return texts.DocxContentType
+	case ".pdf":
+		return "application/pdf"
+	default:
+		return texts.PlainTextContentType
+	}
 }
 
 func build_AttachmentHeader(name string) string {
