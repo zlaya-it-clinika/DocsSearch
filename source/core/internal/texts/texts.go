@@ -23,20 +23,21 @@ const (
 	RoleTitleUser        = "Сотрудник"
 	RoleDescriptionUser  = "Вопросы, свои документы, бланки и проверка черновика"
 
-	PermissionChatUse         = "chat.use"
-	PermissionPersonalUpload  = "documents.personal.upload"
-	PermissionGlobalManage    = "documents.global.manage"
-	PermissionPersonalViewAll = "documents.personal.view_all"
-	PermissionDraftsCheck     = "drafts.check"
-	PermissionDraftsAssist    = "drafts.assist"
-	PermissionTemplatesUse    = "templates.use"
-	PermissionUsersManage     = "users.manage"
-	PermissionRolesManage     = "roles.manage"
-	PermissionAuditView       = "audit.view"
-	PermissionAIManage        = "ai.manage"
-	PermissionActionAssign    = "assign_role"
-	PermissionActionRevoke    = "revoke_role"
-	PermissionActionUpdate    = "update_role"
+	PermissionChatUse            = "chat.use"
+	PermissionPersonalUpload     = "documents.personal.upload"
+	PermissionGlobalManage       = "documents.global.manage"
+	PermissionPersonalViewAll    = "documents.personal.view_all"
+	PermissionDraftsCheck        = "drafts.check"
+	PermissionDraftsAssist       = "drafts.assist"
+	PermissionTemplatesUse       = "templates.use"
+	PermissionUsersManage        = "users.manage"
+	PermissionRolesManage        = "roles.manage"
+	PermissionAuditView          = "audit.view"
+	PermissionAIManage           = "ai.manage"
+	PermissionOrganizationManage = "organization.manage"
+	PermissionActionAssign       = "assign_role"
+	PermissionActionRevoke       = "revoke_role"
+	PermissionActionUpdate       = "update_role"
 
 	ScopeGlobal   = "global"
 	ScopePersonal = "personal"
@@ -58,6 +59,7 @@ const (
 	ErrorInvalidBody        = "invalid_body"
 	ErrorLiveNotReady       = "live_not_ready"
 	ErrorEmbedSize          = "embed_size_mismatch"
+	ErrorImageInvalid       = "image_invalid"
 	ErrorEmbedUnavailable   = "embed_unavailable"
 	ErrorStore              = "store_unavailable"
 	ErrorSignupDisabled     = "signup_disabled"
@@ -338,6 +340,7 @@ func Permission_Catalog() []PermissionInfo {
 		{PermissionRolesManage, "Роли", "Создавать, менять и удалять роли"},
 		{PermissionAuditView, "Журналы", "Смотреть журнал вопросов и журнал изменений прав"},
 		{PermissionAIManage, "Модели ИИ", "Подключение к Ollama, выбор и скачивание моделей, параметры ответа"},
+		{PermissionOrganizationManage, "Реквизиты организации", "Генеральный директор, должностные лица, герб и штамп для документов"},
 	}
 }
 

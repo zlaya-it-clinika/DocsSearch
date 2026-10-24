@@ -308,6 +308,7 @@ export const AdminTexts = Object.freeze({
 	tabRoles: 'Роли',
 	tabSettings: 'Настройки',
 	tabAI: 'Модели ИИ',
+	tabOrganization: 'Организация',
 	onlyAdmins: 'Раздел доступен только администраторам',
 	backToChat: 'Вернуться в чат',
 
@@ -419,6 +420,67 @@ export const SettingsTexts = Object.freeze({
 	loadFailed: 'Не удалось загрузить настройки',
 	notSupported: 'Ядро пока не поддерживает настройки входа',
 	notSupportedHint: 'Обновите ядро DocsSearch, и раздел заработает.',
+});
+
+// Вкладка «Организация»: реквизиты для документов
+export const OrganizationTexts = Object.freeze({
+	loadFailed: 'Не удалось загрузить реквизиты организации',
+	notSupported: 'Ядро не поддерживает реквизиты организации',
+	notSupportedHint: 'Обновите ядро до версии с методами /organization',
+	readOnlyHint: 'Реквизиты меняет пользователь с правом «Реквизиты организации».',
+
+	chiefTitle: 'Генеральный директор',
+	chiefLead: 'Подписывает документы от имени организации. Подставляется в бланки как подписант.',
+	chiefEmpty: 'Генеральный директор не указан',
+	chiefAssign: 'Указать',
+	chiefChange: 'Сменить',
+	chiefFormTitle: 'Генеральный директор',
+	chiefDefaultPosition: 'Генеральный директор',
+	chiefSaved: 'Генеральный директор сохранён',
+	chiefReplaceHint: 'Прежний генеральный директор останется в списке должностных лиц.',
+
+	officialsTitle: 'Должностные лица',
+	officialsLead: 'Руководители и ответственные, которых бланки подставляют в подписи, визы и поручения.',
+	officialsEmpty: 'Должностных лиц пока нет',
+	officialsAdd: 'Добавить',
+	officialCreateTitle: 'Новое должностное лицо',
+	officialEditTitle: 'Изменить должностное лицо',
+	officialCreated: 'Должностное лицо добавлено',
+	officialUpdated: 'Изменения сохранены',
+	officialDeleted: 'Должностное лицо удалено',
+	officialDeleteTitle: 'Удалить должностное лицо?',
+	officialDeleteText: '«{name}» больше не будет подставляться в документы.',
+	officialEdit: 'Изменить',
+	officialDelete: 'Удалить',
+
+	columnPosition: 'Должность',
+	columnName: 'ФИО',
+	columnDepartment: 'Подразделение',
+	columnValidFrom: 'Действует с',
+
+	fieldPosition: 'Должность',
+	fieldPositionHint: 'Как в подписи документа, например «Директор Департамента ДОУ»',
+	fieldName: 'ФИО',
+	fieldNameHint: 'Как в подписи: «И. И. Иванов» или полностью',
+	fieldDepartment: 'Подразделение',
+	fieldValidFrom: 'Действует с',
+	fieldValidFromHint: 'Необязательно. С этой даты должностное лицо подписывает документы',
+	requiredMissing: 'Заполните должность и ФИО',
+
+	imagesTitle: 'Герб и штамп',
+	imagesLead: 'Вставляются в бланк исходящего письма. PNG или JPEG до 2 МБ, лучше PNG с прозрачным фоном.',
+	emblemTitle: 'Герб',
+	stampTitle: 'Штамп',
+	imageEmpty: 'Не загружен',
+	imageUpload: 'Загрузить',
+	imageReplace: 'Заменить',
+	imageDelete: 'Удалить',
+	imageUploaded: 'Изображение сохранено',
+	imageDeleted: 'Изображение удалено',
+	imageDeleteTitle: 'Удалить изображение?',
+	imageDeleteText: '«{name}» больше не будет вставляться в документы.',
+	imageTooLarge: 'Файл больше 2 МБ',
+	imageWrongType: 'Нужен файл PNG или JPEG',
 });
 
 export const RoleAdminTexts = Object.freeze({
@@ -572,6 +634,7 @@ export const ErrorTexts = Object.freeze({
 	invalid_body: 'Сервер не принял данные. Проверьте заполнение полей и формат файла.',
 	live_not_ready: 'Боевой режим ядра ещё не включён',
 	embed_unavailable: 'Локальная модель ИИ недоступна. Проверьте, что Ollama запущена и нужные модели скачаны.',
+	image_invalid: 'Нужна картинка PNG или JPEG размером до 2 МБ',
 	embed_size_mismatch: 'Модель эмбеддингов возвращает вектор другого размера, чем у индекса базы знаний. Выберите модель того же размера или поменяйте OLLAMA_EMBED_DIMENSIONS в настройках ядра.',
 	ollama_unavailable: 'Ollama не отвечает по этому адресу или нужной модели в ней нет',
 	model_not_found: 'Такой модели в Ollama нет',

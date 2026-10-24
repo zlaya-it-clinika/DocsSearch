@@ -67,13 +67,19 @@ func (store *LiveStore) Save_AISettings(ctx context.Context, token string, setti
 // Флаг ai.manage появился после первых установок: один раз выдаём его главному администратору и администратору.
 // Дальше набор флагов роли меняет только конструктор ролей
 func (store *LiveStore) grant_AIPermission(ctx context.Context) error {
+	return store.grant_PermissionOnce(ctx, settingsKeyAIPermission, texts.PermissionAIManage)
+}
+
+// Новый флаг для старых установок: выдаётся главному администратору и администратору один раз.
+// Отметка в app_settings не даёт вернуть флаг, который потом сняли в конструкторе ролей
+func (store *LiveStore) grant_PermissionOnce(ctx context.Context, settingsKey, permission string) error {
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	var granted bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = $1)`, settingsKeyAIPermission).Scan(&granted); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM app_settings WHERE key = $1)`, settingsKey).Scan(&granted); err != nil {
 		return err
 	}
 	if granted {
@@ -82,10 +88,10 @@ func (store *LiveStore) grant_AIPermission(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO role_permissions (role_id, permission)
 		SELECT role_id, $1 FROM roles WHERE role_id IN ($2, $3)
-		ON CONFLICT DO NOTHING`, texts.PermissionAIManage, texts.RoleIDChief, texts.RoleIDAdmin); err != nil {
+		ON CONFLICT DO NOTHING`, permission, texts.RoleIDChief, texts.RoleIDAdmin); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO app_settings (key, value) VALUES ($1, 'true'::jsonb) ON CONFLICT (key) DO NOTHING`, settingsKeyAIPermission); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO app_settings (key, value) VALUES ($1, 'true'::jsonb) ON CONFLICT (key) DO NOTHING`, settingsKey); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

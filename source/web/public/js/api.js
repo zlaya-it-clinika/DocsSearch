@@ -359,6 +359,41 @@ export function start_Reindex() {
 	return request_Api('POST', '/ai/reindex', { json: {} });
 }
 
+// Реквизиты организации: генеральный директор, должностные лица, герб и штамп
+export function fetch_Organization() {
+	return request_Api('GET', '/organization');
+}
+
+// fields: position, fullName, department, chief, validFrom (ГГГГ-ММ-ДД или пусто)
+export function create_Official(fields) {
+	return request_Api('POST', '/organization/officials', { json: fields });
+}
+
+export function update_Official(officialId, fields) {
+	return request_Api('PATCH', `/organization/officials/${encode_Segment(officialId)}`, { json: fields });
+}
+
+export function delete_Official(officialId) {
+	return request_Api('DELETE', `/organization/officials/${encode_Segment(officialId)}`);
+}
+
+// kind: emblem (герб) или stamp (штамп)
+export function upload_OrganizationImage(kind, file) {
+	const formData = new FormData();
+	formData.append('file', file);
+	return request_Api('POST', `/organization/images/${encode_Segment(kind)}`, { formData });
+}
+
+export function delete_OrganizationImage(kind) {
+	return request_Api('DELETE', `/organization/images/${encode_Segment(kind)}`);
+}
+
+// Версия в адресе - время обновления: после замены картинки браузер не покажет старую из кэша
+export function build_OrganizationImageUrl(kind, version = '') {
+	const query = version ? `?v=${encodeURIComponent(version)}` : '';
+	return `${apiPrefix}/organization/images/${encode_Segment(kind)}${query}`;
+}
+
 export function fetch_Reindex() {
 	return request_Api('GET', '/ai/reindex');
 }

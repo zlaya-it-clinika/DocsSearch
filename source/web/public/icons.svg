@@ -142,6 +142,10 @@
 		<rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
 		<path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>
 	</symbol>
+	<symbol id="building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 9h4a1 1 0 0 1 1 1v11M2 21h20"/>
+		<path d="M8 8h3M8 12h3M8 16h3"/>
+	</symbol>
 	<symbol id="play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 		<path d="M7 5v14l11-7z"/>
 	</symbol>

@@ -204,9 +204,9 @@ test('запрос с чужого origin отклоняется', async () => {
 	assert.equal((await response.json()).error, 'origin_denied');
 });
 
-test('процессы, роли, бланки и флаги уходят в ядро', async () => {
+test('процессы, роли, бланки, флаги и реквизиты организации уходят в ядро', async () => {
 	const { cookie } = await login_AsTestUser();
-	for (const path of ['/processes', '/roles', '/permissions', '/blanks/order/file']) {
+	for (const path of ['/processes', '/roles', '/permissions', '/blanks/order/file', '/organization', '/organization/images/stamp']) {
 		await fetch(`${webUrl}/api${path}`, { headers: { cookie } });
 		assert.equal(coreRequests.at(-1).url, path);
 	}

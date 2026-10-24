@@ -148,12 +148,15 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 	if err = store.seed_Roles(ctx); err != nil {
 		return err
 	}
-	return store.grant_AIPermission(ctx)
+	if err = store.grant_AIPermission(ctx); err != nil {
+		return err
+	}
+	return store.grant_PermissionOnce(ctx, settingsKeyOrganizationPermission, texts.PermissionOrganizationManage)
 }
 
 func read_MigrationSQL() (string, error) {
 	var builder strings.Builder
-	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql"} {
+	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql", "008_organization.sql"} {
 		raw, err := read_MigrationFile(name)
 		if err != nil {
 			return "", err
