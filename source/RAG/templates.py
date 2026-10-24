@@ -26,7 +26,10 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-from config import DATA_DIR, SOURCE_DIR, LLM_MODEL, OLLAMA_HOST
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Mm
+
+from config import DATA_DIR, SOURCE_DIR, LLM_MODEL, OLLAMA_HOST, FORMAT_PRIORITY
 
 OUT_DIR = DATA_DIR / "out"
 
@@ -422,7 +425,8 @@ class FillSession:
 			self.log.append(f"Абзац заполнен с помощью модели: «{result[:90]}…»")
 		if BLANK_RE.search(result) or re.search(r"\[\d+\]", result):
 			problems.append(f"Проверьте абзац: «{result[:100]}»")
-		result = result.strip()
+		# переносы строк шаблона («является\n____») при выравнивании по ширине растягивают строку
+		result = re.sub(r"[ \t]*\n[ \t]*", " ", result.strip())
 		if re.fullmatch(r"\d+\.\s*\.?", result) or not result:     # необязательный пункт удалён целиком
 			p._element.getparent().remove(p._element)
 			return
@@ -488,11 +492,81 @@ class FillSession:
 			self._fill_paragraph(b, problems)
 
 		self._renumber(doc)
+		self._normalize_format(doc)
 		OUT_DIR.mkdir(parents=True, exist_ok=True)
 		stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 		out = OUT_DIR / f"{self.t['id'].replace('Модуль_', 'Проект_')}_{stamp}.docx"
 		doc.save(out)
-		return {"path": out, "problems": problems, "log": self.log}
+		from check import check_docx
+		return {"path": out, "problems": problems, "log": self.log, "check": check_docx(out)}
+
+	@staticmethod
+	def _normalize_format(doc):
+		"""Оформление основного текста по ГОСТ Р 7.0.97-2025 и Инструкции.
+
+		* текст выравнивается по ширине (ГОСТ, п. 3.5); заголовок и «ПРИКАЗЫВАЮ:» не трогаем;
+		* при FORMAT_PRIORITY = "gost" - инициалы без пробела: «И.И. Иванов» (ГОСТ, п. 5.22).
+		"""
+		# абзац шаблона, разорванный на два («2. Департаменту …» + «обеспечить применение …»)
+		prev, in_text = None, False
+		for p in list(doc.paragraphs):
+			t = p.text.strip()
+			if not t:
+				continue
+			if t in ("ПРИКАЗЫВАЮ:", "ОБЯЗЫВАЮ:"):
+				in_text = True                     # склеиваем только в распорядительной части
+			if (in_text and prev is not None and re.match(r"^[а-яё]", t)
+					and not re.search(r"[.;:,]$", prev.text.strip())
+					and KEEP_MARK not in t and KEEP_MARK not in prev.text):
+				set_paragraph_text(prev, prev.text.rstrip() + " " + t)
+				p._element.getparent().remove(p._element)
+				continue
+			prev = p
+
+		started = False
+		for p in doc.paragraphs:
+			t = p.text.strip()
+			if not t:
+				continue
+			if not started and re.match(r"^Об?\s", t):
+				started = True
+				continue
+			if started and KEEP_MARK not in t and t not in ("ПРИКАЗЫВАЮ:", "ОБЯЗЫВАЮ:") \
+					and p.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+				p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+		FillSession._page_numbers(doc)
+		if FORMAT_PRIORITY == "gost":
+			cells = [c for tb in doc.tables for row in tb.rows for c in row.cells]
+			for p in list(doc.paragraphs) + [cp for c in cells for cp in c.paragraphs]:
+				for r in p.runs:
+					if re.search(r"\b[А-ЯЁ]\.\s+[А-ЯЁ]\.", r.text):
+						r.text = re.sub(r"\b([А-ЯЁ])\.\s+([А-ЯЁ])\.", r"\1.\2.", r.text)
+
+	@staticmethod
+	def _page_numbers(doc):
+		"""Номер страницы со второй страницы:
+		Инструкция (гл. 8) - справа в нижнем колонтитуле; ГОСТ (п. 3.2) - посередине верхнего поля.
+		В шаблонах модулей номер стоит по центру внизу и на первой странице - исправляем."""
+		for s in doc.sections:
+			s.different_first_page_header_footer = True          # на первой странице номера нет
+			num = [p for p in s.footer.paragraphs
+				   if any(x.tag.endswith("instrText") and "PAGE" in (x.text or "") for x in p._element.iter())
+				   or any(x.tag.endswith("fldSimple") for x in p._element.iter())]
+			if not num:
+				continue
+			if FORMAT_PRIORITY == "gost":
+				hp = s.header.paragraphs[0]
+				hp._element.addnext(copy.deepcopy(num[0]._element))
+				hp._element.getparent().remove(hp._element)
+				s.header.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+				s.header_distance = Mm(10)
+				for p in num:
+					p._element.getparent().remove(p._element)
+				if not s.footer.paragraphs:
+					s.footer.add_paragraph()
+			else:
+				for p in num:
+					p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
 	@staticmethod
 	def _renumber(doc):

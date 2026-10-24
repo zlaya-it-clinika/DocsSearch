@@ -84,6 +84,9 @@ def run(template: dict, scripted: list[str] | None = None):
 		for p in res["problems"]:
 			print(f"  ! {p}")
 
+	from check import print_report
+	print_report(res["path"], res["check"])
+
 	# Маршрут визирования по Матрице
 	route = matrix_route(template)
 	deps = list(route["always"])

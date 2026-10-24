@@ -94,7 +94,7 @@ def chunk_by_clauses(lines: list[str], doc_title: str, max_chars: int,
 
 
 # ---------------------------------------------------------------- сокращения
-ABBR_RE = re.compile(r"([^;:]+?)\s*\(([А-ЯЁA-Z][^()]{0,25})\)\s*\u2014")
+ABBR_RE = re.compile(r"([^;:]+?)\s*\(([А-ЯЁA-Z][^()]{0,25})\)\s*—")
 
 
 def parse_glossary(chunks: list[dict]) -> dict[str, str]:
