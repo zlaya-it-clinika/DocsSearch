@@ -11,7 +11,7 @@
 | Ответ в чате: пересказ по найденным фрагментам, цитаты, процент релевантности | `OLLAMA_CHAT_MODEL`: `vikhr-nemo` (Vikhr-Nemo-12B) | работает |
 | Уточняющий вопрос: если два лучших фрагмента из разных документов почти одинаково подходят, модель спрашивает, о каком документе речь | `OLLAMA_CHAT_MODEL` | работает |
 | Честный отказ: если подходящих фрагментов нет, ответ `fallback` без обращения к модели | - | работает |
-| Бланки и проверка черновика | - | пока заглушки ядра |
+| Бланки, макеты документов и проверка черновика | `OLLAMA_CHAT_MODEL` для текста макетов, без модели документ собирается из ответов | работает |
 
 Для проверки нужны обе модели: без них чат отвечает ошибкой «Локальная модель ИИ недоступна».
 
@@ -53,7 +53,7 @@ curl http://127.0.0.1:11434/api/version
 ollama pull nomic-embed-text
 ```
 
-Чат-модель проекта - [Vikhr-Nemo-12B-Instruct-R-21-09-24](https://huggingface.co/Vikhrmodels/Vikhr-Nemo-12B-Instruct-R-21-09-24): Mistral-Nemo 12B, обученная на русском, лицензия Apache-2.0. Ollama берёт её готовую квантизацию в формате GGUF прямо с Hugging Face. Параметры генерации заданы в [source/ollama/vikhr-nemo.Modelfile](source/ollama/vikhr-nemo.Modelfile): авторы модели советуют temperature 0.1-0.5, а ядро своих параметров не передаёт.
+Чат-модель проекта - [Vikhr-Nemo-12B-Instruct-R-21-09-24](https://huggingface.co/Vikhrmodels/Vikhr-Nemo-12B-Instruct-R-21-09-24): Mistral-Nemo 12B, обученная на русском, лицензия Apache-2.0. Ollama берёт её готовую квантизацию в формате GGUF прямо с Hugging Face. Параметры генерации заданы в [source/ollama/vikhr-nemo.Modelfile](../source/ollama/vikhr-nemo.Modelfile): авторы модели советуют temperature 0.1-0.5, а ядро своих параметров не передаёт.
 
 Из корня репозитория:
 
@@ -95,7 +95,7 @@ llama-quantize vikhr-docs-f16.gguf vikhr-docs-Q4_K_M.gguf Q4_K_M
 curl -s http://127.0.0.1:11434/api/embed -d "{\"model\":\"nomic-embed-text\",\"input\":[\"проверка\"]}" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).embeddings[0].length))"
 ```
 
-Шаги 3-5 можно заменить одной командой: общий `docker compose` в каталоге `source` поднимает PostgreSQL, ядро и веб сразу, а с профилем `ollama` и саму Ollama с моделями. Инструкция в [source/README.md](source/README.md). Ниже - запуск по отдельности, удобный для разработки.
+Шаги 3-5 можно заменить одной командой: общий `docker compose` в каталоге `source` поднимает PostgreSQL, ядро и веб сразу, а с профилем `ollama` и саму Ollama с моделями. Инструкция в [source/README.md](../source/README.md). Ниже - запуск по отдельности, удобный для разработки.
 
 ## Шаг 3. Запустить PostgreSQL
 

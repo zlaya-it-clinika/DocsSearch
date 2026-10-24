@@ -4,8 +4,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 
 # Папка с материалами кейса (инструкция, матрица, методички, модули).
-# По умолчанию - подпапка docs рядом с кодом, так проект работает на любом компьютере.
-SOURCE_DIR = BASE_DIR / "docs"
+# Общий стандартный набор source/docs - тот же, что ядро загружает в базу знаний, без отдельной копии.
+SOURCE_DIR = BASE_DIR.parent / "docs"
 
 # Куда складываем результаты обработки
 DATA_DIR = BASE_DIR / "data"            # chunks.json, matrix.json, templates/*.json

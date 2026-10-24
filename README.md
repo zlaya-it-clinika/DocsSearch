@@ -1,6 +1,15 @@
-# DocsSearch
+<p align="center">
+  <img src="documents/assets/logo.png" alt="Логотип DocsSearch" width="128">
+</p>
 
-**Локальный помощник по внутренним документам организации.** Сотрудник спрашивает своими словами («когда регистрируют входящее письмо?»), а DocsSearch находит нужный пункт инструкции, объясняет его простым языком и показывает цитату со ссылкой на оригинал. Ещё он готовит документы по бланкам и проверяет черновики по Инструкции по ДОУ.
+<h1 align="center">DocsSearch</h1>
+
+<p align="center">
+  <b>Локальный помощник по внутренним документам организации</b><br>
+  Go · Node.js · PostgreSQL + pgvector · Ollama
+</p>
+
+Сотрудник спрашивает своими словами («когда регистрируют входящее письмо?»), а DocsSearch находит нужный пункт инструкции, объясняет его простым языком и показывает цитату со ссылкой на оригинал. Ещё он готовит документы по бланкам и проверяет черновики по Инструкции по ДОУ.
 
 Всё работает на ваших серверах: модель ИИ запускается локально через Ollama, вопросы и документы никуда не уходят.
 
@@ -17,7 +26,7 @@
 
 ## Быстрый старт
 
-Нужны [Docker Desktop](https://www.docker.com/products/docker-desktop/) и [Ollama](https://ollama.com) с моделями (как поставить модели - в [LOCAL_AI.md](LOCAL_AI.md), шаг 2). Без Ollama на машине подойдёт профиль `ollama`, см. [source/README.md](source/README.md#если-ollama-на-этой-машине-нет).
+Нужны [Docker Desktop](https://www.docker.com/products/docker-desktop/) и [Ollama](https://ollama.com) с моделями (как поставить модели - в [LOCAL_AI.md](documents/LOCAL_AI.md#шаг-2-скачать-модели)). Без Ollama на машине подойдёт профиль `ollama`, см. [source/README.md](source/README.md#если-ollama-на-этой-машине-нет).
 
 ```bash
 cd source
@@ -56,14 +65,16 @@ flowchart LR
 | [source/ollama](source/ollama) | Modelfile чат-модели Vikhr-Nemo-12B |
 | [source/RAG](source/RAG) | Исследовательский прототип на Python: на нём подбирали нарезку, пороги и промпты для ядра |
 | [source/docker-compose.yml](source/docker-compose.yml) | Весь проект одной командой |
+| [documents](documents) | Второстепенные документы: локальная ИИ, проверка LDAP, правила кода, материалы кейса, логотипы |
 
 ## Документация
 
 | Документ | Для кого и о чём |
 |---|---|
 | [source/README.md](source/README.md) | Запуск и обслуживание: настройки, команды, неполадки |
-| [LOCAL_AI.md](LOCAL_AI.md) | Ollama и модели на Windows, запуск модулей по отдельности для разработки |
-| [LDAP_DEMO.md](LDAP_DEMO.md) | Проверка входа через каталог на тестовом LLDAP |
+| [LOCAL_AI.md](documents/LOCAL_AI.md) | Ollama и модели на Windows, запуск модулей по отдельности для разработки |
+| [LDAP_DEMO.md](documents/LDAP_DEMO.md) | Проверка входа через каталог на тестовом LLDAP |
+| [CodeStyle.md](documents/CodeStyle.md) | Правила кода и коммитов команды |
 | [source/core/README.md](source/core/README.md) | Ядро: режимы, путь вопроса, права, API |
 | [source/web/README.md](source/web/README.md) | Веб: экраны, безопасность, виджет |
 | [source/RAG/README.md](source/RAG/README.md) | Прототип RAG на Python |
@@ -78,6 +89,29 @@ flowchart LR
 
 ## Команда
 
-Проект хакатона. Ядро - PotJoke, веб - Syharik3316, прототип RAG - rodyaisdead. Правила кода и коммитов - [CodeStyle.md](CodeStyle.md).
+<p align="center">
+  <a href="https://github.com/zlaya-it-clinika"><img src="documents/assets/team-logo.webp" alt="Злая IT клиника" width="420"></a>
+</p>
+
+DocsSearch сделала команда **«Злая IT клиника»** на хакатоне по кейсу Банка России.
+
+<table align="center">
+  <tr>
+    <td align="center" width="160">
+      <a href="https://github.com/Syharik3316"><img src="https://github.com/Syharik3316.png?size=200" width="100" alt="Syharik3316"><br><b>Syharik3316</b></a><br>
+      <sub>веб: чат, админ-панель, виджет</sub>
+    </td>
+    <td align="center" width="160">
+      <a href="https://github.com/bulankov69"><img src="https://github.com/bulankov69.png?size=200" width="100" alt="bulankov69"><br><b>bulankov69</b></a><br>
+      <sub>ядро на Go</sub>
+    </td>
+    <td align="center" width="160">
+      <a href="https://github.com/rodyaisdead"><img src="https://github.com/rodyaisdead.png?size=200" width="100" alt="rodyaisdead"><br><b>rodyaisdead</b></a><br>
+      <sub>прототип RAG, ядро</sub>
+    </td>
+  </tr>
+</table>
+
+Правила кода и коммитов команды - [CodeStyle.md](documents/CodeStyle.md).
 
 Файла лицензии в репозитории пока нет.

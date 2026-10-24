@@ -10,7 +10,7 @@
 
 | Скрипт | Этап | Что делает |
 |---|---|---|
-| `ingest.py` | 2 | разбирает материалы кейса из `docs/` и строит векторную базу в `data/` |
+| `ingest.py` | 2 | разбирает материалы кейса из общего [source/docs](../docs) и строит векторную базу в `data/` |
 | `search.py` | - | поиск без модели: какие фрагменты найдутся по вопросу |
 | `rag.py` | 3 | ответ на вопрос: поиск и Vikhr-Nemo в режиме Grounded RAG |
 | `fill.py`, `templates.py` | 4 | подготовка приказа или распоряжения по модульному бланку в диалоге, маршрут визирования по Матрице |
@@ -28,7 +28,7 @@
 
 ## Запуск
 
-Нужны Python 3, [Ollama](https://ollama.com) и две модели из [config.py](config.py):
+Нужны Python 3.10 или новее, [Ollama](https://ollama.com) и две модели из [config.py](config.py):
 
 ```bash
 ollama pull bge-m3
@@ -39,13 +39,13 @@ ollama pull OxW/Vikhr-Nemo-12B-Instruct-R-21-09-24:q4_K_M
 pip install numpy ollama pdfplumber python-docx
 ```
 
-Из каталога `source/RAG`. Векторы (`data/vectors.npy`) в git не лежат, поэтому первым шагом:
+Из каталога `source/RAG`. Готовая база (`data/chunks.json`, `data/vectors.npy`) уже лежит в репозитории. После изменения документов в `source/docs` её нужно собрать заново:
 
 ```bash
 python ingest.py
 ```
 
-Дальше:
+Вопрос к прототипу:
 
 ```bash
 python rag.py "Когда регистрируются входящие документы?"

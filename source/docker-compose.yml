@@ -1,7 +1,7 @@
 # Весь DocsSearch одной командой: PostgreSQL с pgvector, ядро на Go и веб на Node.js.
 # Запуск из каталога source: cp .env.example .env, задать DOCS_PASSWORD, затем docker compose up -d --build
 # Ollama по умолчанию берётся с хоста. Ollama в контейнере: docker compose --profile ollama up -d --build
-# Тестовый каталог LDAP для проверки входа: docker compose --profile ldap up -d (см. LDAP_DEMO.md)
+# Тестовый каталог LDAP для проверки входа: docker compose --profile ldap up -d (см. documents/LDAP_DEMO.md)
 name: docssearch
 
 services:
