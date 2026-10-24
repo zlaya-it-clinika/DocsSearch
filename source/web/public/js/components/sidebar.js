@@ -1,7 +1,7 @@
 // Боковая панель: новый чат, поиск, история по датам, меню пользователя.
 import { HistorySources } from '../chat-history.js';
 import { navigate_To } from '../router.js';
-import { create_Element, create_Icon, create_IconButton, create_SearchBox } from '../lib/dom.js';
+import { create_Element, create_Icon, create_IconButton, create_Logo, create_SearchBox } from '../lib/dom.js';
 import { get_DateGroupLabel, get_Initials } from '../lib/format.js';
 import { Themes, get_Theme, set_Theme } from '../preferences.js';
 import { can_OpenAdmin, get_RoleLabel, get_UserRole } from '../roles.js';
@@ -262,7 +262,7 @@ export function create_Sidebar({ user, config, history, onNavigate, onLogout, on
 	const element = create_Element('aside', { className: 'sidebar', attrs: { 'aria-label': AppTexts.productName } }, [
 		create_Element('div', { className: 'sidebar-header' }, [
 			create_Element('a', { className: 'brand', attrs: { href: '/', 'data-link': true } }, [
-				create_Element('span', { className: 'brand-mark' }, [create_Icon('logo')]),
+				create_Logo(),
 				create_Element('span', { text: AppTexts.productName }),
 			]),
 			create_IconButton('sidebar', SidebarTexts.collapse, () => onToggle()),

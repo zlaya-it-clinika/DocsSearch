@@ -2,7 +2,7 @@
 // Какие режимы доступны, говорит ядро через /auth/config. Пока ответа нет, работает обычный вход.
 import { fetch_AuthConfig, login_LdapUser, login_User, signup_User } from '../api.js';
 import { show_Toast } from '../components/toast.js';
-import { create_Element, create_Icon } from '../lib/dom.js';
+import { create_Element, create_Icon, create_Logo } from '../lib/dom.js';
 import { read_Preference, write_Preference } from '../preferences.js';
 import { AppTexts, AuthTexts, format_Text, get_ErrorText } from '../texts.js';
 
@@ -230,7 +230,7 @@ export function create_LoginView({ onSuccess, compact = false }) {
 	const element = create_Element('main', { className: 'auth-page' }, [
 		create_Element('div', { className: 'auth-card' }, [
 			create_Element('div', { className: 'auth-header' }, [
-				create_Element('span', { className: 'brand-mark' }, [create_Icon('logo')]),
+				create_Logo(),
 				titleElement,
 				leadElement,
 			]),

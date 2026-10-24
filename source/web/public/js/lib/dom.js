@@ -53,6 +53,14 @@ export function create_Icon(name, className = 'icon') {
 	return svg;
 }
 
+// Пиксельный логотип DocsSearch. Подпись рядом, поэтому для экранного диктора картинка декоративная
+export function create_Logo(className = 'brand-logo') {
+	return create_Element('img', {
+		className,
+		attrs: { src: '/logo-192.png', alt: '', width: 192, height: 192, draggable: 'false', 'aria-hidden': 'true' },
+	});
+}
+
 export function create_IconButton(iconName, label, onClick, className = 'icon-button') {
 	return create_Element('button', {
 		className,

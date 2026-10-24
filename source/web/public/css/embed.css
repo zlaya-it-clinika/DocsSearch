@@ -21,6 +21,11 @@
 	font-size: var(--text-sm);
 }
 
+.embed-header .brand-logo {
+	width: 24px;
+	height: 24px;
+}
+
 .embed-header .brand-mark {
 	width: 24px;
 	height: 24px;

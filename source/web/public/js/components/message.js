@@ -1,6 +1,6 @@
 // Отрисовка реплик чата. Вид ответа ассистента выбирается по полю kind из контракта ядра.
 import { build_LinkedFileUrl } from '../api.js';
-import { copy_ToClipboard, create_Element, create_Icon, create_IconButton, download_TextFile } from '../lib/dom.js';
+import { copy_ToClipboard, create_Element, create_Icon, create_IconButton, create_Logo, download_TextFile } from '../lib/dom.js';
 import { build_SafeFileName, format_FileSize } from '../lib/format.js';
 import { render_Markdown } from '../lib/markdown.js';
 import { AppTexts, ChatTexts } from '../texts.js';
@@ -242,7 +242,7 @@ function build_AssistantCopyText(message) {
 function create_AssistantHeader(kind) {
 	const label = kindLabels[kind];
 	return create_Element('div', { className: 'message-header' }, [
-		create_Element('span', { className: 'message-avatar' }, [create_Icon('logo')]),
+		create_Logo('message-logo'),
 		create_Element('span', { className: 'message-author', text: AppTexts.productName }),
 		label ? create_Element('span', { className: 'kind-label', text: label }) : null,
 	]);

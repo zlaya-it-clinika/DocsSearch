@@ -112,6 +112,14 @@
 	gap: var(--space-2);
 }
 
+.message-logo {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	image-rendering: pixelated;
+	user-select: none;
+}
+
 .message-avatar {
 	display: inline-flex;
 	align-items: center;
