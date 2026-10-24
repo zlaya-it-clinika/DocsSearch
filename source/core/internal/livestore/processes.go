@@ -62,7 +62,8 @@ func (store *LiveStore) Create_Process(ctx context.Context, token, title, select
 	if err != nil {
 		return Process{}, err
 	}
-	if !account.Has(texts.PermissionUsersManage) {
+	// Процессы - структура базы знаний, ими управляет тот, кто управляет общими документами
+	if !account.Has(texts.PermissionGlobalManage) {
 		return Process{}, ErrAccessDenied
 	}
 	title = strings.TrimSpace(title)

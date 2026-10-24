@@ -20,6 +20,7 @@ import (
 	"docssearch/core/internal/chunk"
 	"docssearch/core/internal/contacts"
 	"docssearch/core/internal/draftcheck"
+	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/source"
 	"docssearch/core/internal/texts"
 )
@@ -61,6 +62,8 @@ type documentRecord struct {
 type processRecord struct {
 	id            string
 	title         string
+	description   string
+	color         string
 	selectPrompt  string
 	answerPrompt  string
 	clarifyPrompt string
@@ -77,6 +80,8 @@ type sessionRecord struct {
 	blankFill         blank.FillState
 	attachmentsByID   map[string]*attachmentRecord
 	draftAttachmentID string
+	// Процесс, выбранный в чате. Пустая строка - все процессы
+	processID string
 }
 
 type attachmentRecord struct {
@@ -96,6 +101,8 @@ type citation struct {
 	OriginalLink string `json:"originalLink"`
 	DocumentID   string `json:"documentId"`
 	Scope        string `json:"scope"`
+	// Процесс документа цитаты, для метки темы у источника
+	ProcessID string `json:"processId,omitempty"`
 }
 
 type replyContact struct {
@@ -129,6 +136,13 @@ type assistantReply struct {
 	Contacts         *[]replyContact `json:"contacts,omitempty"`
 	Template         *templateState  `json:"template,omitempty"`
 	Draft            *draftState     `json:"draft,omitempty"`
+	// Где искали ответ: процесс, выбранный в чате. Пустой объект - все процессы
+	Process *processRef `json:"process,omitempty"`
+}
+
+type processRef struct {
+	ProcessID string `json:"processId"`
+	Title     string `json:"title"`
 }
 
 type messageAttachment struct {
@@ -228,13 +242,22 @@ type importResponse struct {
 }
 
 type processLine struct {
-	ProcessID string `json:"processId"`
-	Title     string `json:"title"`
+	ProcessID     string `json:"processId"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Color         string `json:"color"`
+	DocumentCount int    `json:"documentCount"`
+	// Подсказки модели видят только те, кто управляет базой знаний
+	SelectPrompt  *string `json:"selectPrompt,omitempty"`
+	AnswerPrompt  *string `json:"answerPrompt,omitempty"`
+	ClarifyPrompt *string `json:"clarifyPrompt,omitempty"`
 }
 
 type processDetail struct {
 	ProcessID     string `json:"processId"`
 	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Color         string `json:"color"`
 	SelectPrompt  string `json:"selectPrompt"`
 	AnswerPrompt  string `json:"answerPrompt"`
 	ClarifyPrompt string `json:"clarifyPrompt"`
@@ -386,6 +409,7 @@ func (stubStore *stub) add_DefaultProcess() {
 	stubStore.store_Process(&processRecord{
 		id:            texts.ProcessDocuments,
 		title:         texts.ProcessTitleDocuments,
+		color:         texts.SeedProcessColor,
 		selectPrompt:  texts.LiveSelectPrompt,
 		answerPrompt:  texts.LiveAnswerPrompt,
 		clarifyPrompt: texts.LiveClarifyPrompt,
@@ -441,6 +465,8 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("POST /documents/import", stubStore.serve_ImportDocuments)
 	routeMux.HandleFunc("GET /processes", stubStore.serve_ListProcesses)
 	routeMux.HandleFunc("POST /processes", stubStore.serve_CreateProcess)
+	routeMux.HandleFunc("PATCH /processes/{processId}", stubStore.serve_PatchProcess)
+	routeMux.HandleFunc("DELETE /processes/{processId}", stubStore.serve_DeleteProcess)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", stubStore.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /blanks/{blankId}/file", stubStore.serve_BlankFile)
@@ -570,14 +596,16 @@ func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, 
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string `json:"sessionId"`
+		ProcessID string `json:"processId"`
 		Messages  []any  `json:"messages"`
-	}{SessionID: session.id, Messages: session.messages})
+	}{SessionID: session.id, ProcessID: stubStore.saved_SessionProcess(session), Messages: session.messages})
 }
 
 func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
-		Text          string   `json:"text"`
-		ProcessID     string   `json:"processId"`
+		Text string `json:"text"`
+		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
+		ProcessID     *string  `json:"processId"`
 		AttachmentIDs []string `json:"attachmentIds"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
@@ -596,9 +624,16 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	}
 	record := stubStore.usersByID[session.ownerID]
 	permissions := stubStore.permissions_Of(record)
-	if strings.TrimSpace(body.ProcessID) != "" && stubStore.processesByID[strings.TrimSpace(body.ProcessID)] == nil {
+	processID := stubStore.saved_SessionProcess(session)
+	if body.ProcessID != nil {
+		processID = strings.TrimSpace(*body.ProcessID)
+	}
+	if processID != "" && stubStore.processesByID[processID] == nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
+	}
+	if body.ProcessID != nil {
+		session.processID = processID
 	}
 	var reply assistantReply
 	var step blank.Step
@@ -648,6 +683,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		draftID := stubStore.save_DraftFile(record.id, step.BlankID+".docx", step.DraftDocx)
 		reply.Template.DraftLink = draft_FileLink(draftID)
 	}
+	reply = stubStore.apply_StubProcess(reply, processID)
 	if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
 		reply = reply_WithContacts(reply, stubStore.lookup_Contacts(record, body.Text))
 	}
@@ -868,27 +904,37 @@ func (stubStore *stub) serve_ImportDocuments(responseWriter http.ResponseWriter,
 func (stubStore *stub) serve_ListProcesses(responseWriter http.ResponseWriter, request *http.Request) {
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
-	if _, found := stubStore.find_UserByBearerToken(request); !found {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
+	canManage := auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionGlobalManage)
 	lines := make([]processLine, 0, len(stubStore.processes))
 	for _, process := range stubStore.processes {
-		lines = append(lines, processLine{ProcessID: process.id, Title: process.title})
+		lines = append(lines, build_ProcessLine(stubStore.process_Card(process, record), canManage))
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
+		CanManage bool          `json:"canManage"`
 		Processes []processLine `json:"processes"`
-	}{Processes: lines})
+	}{CanManage: canManage, Processes: lines})
 }
 
 func (stubStore *stub) serve_CreateProcess(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Title         string `json:"title"`
+		Description   string `json:"description"`
+		Color         string `json:"color"`
 		SelectPrompt  string `json:"selectPrompt"`
 		AnswerPrompt  string `json:"answerPrompt"`
 		ClarifyPrompt string `json:"clarifyPrompt"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	color, colorOK := livestore.Normalize_ProcessColor(body.Color)
+	if !colorOK {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -899,7 +945,7 @@ func (stubStore *stub) serve_CreateProcess(responseWriter http.ResponseWriter, r
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionUsersManage) {
+	if !auth.Has_Permission(stubStore.permissions_Of(record), texts.PermissionGlobalManage) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 		return
 	}
@@ -920,6 +966,8 @@ func (stubStore *stub) serve_CreateProcess(responseWriter http.ResponseWriter, r
 	created := &processRecord{
 		id:            "process-" + strconv.Itoa(stubStore.nextProcess),
 		title:         title,
+		description:   strings.TrimSpace(body.Description),
+		color:         color,
 		selectPrompt:  prompt_OrText(body.SelectPrompt, selectPrompt),
 		answerPrompt:  prompt_OrText(body.AnswerPrompt, answerPrompt),
 		clarifyPrompt: prompt_OrText(body.ClarifyPrompt, clarifyPrompt),
@@ -929,6 +977,8 @@ func (stubStore *stub) serve_CreateProcess(responseWriter http.ResponseWriter, r
 	write_JSONResponse(responseWriter, http.StatusOK, processDetail{
 		ProcessID:     created.id,
 		Title:         created.title,
+		Description:   created.description,
+		Color:         created.color,
 		SelectPrompt:  created.selectPrompt,
 		AnswerPrompt:  created.answerPrompt,
 		ClarifyPrompt: created.clarifyPrompt,

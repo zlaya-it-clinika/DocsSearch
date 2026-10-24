@@ -605,3 +605,66 @@
 .contact-row + .contact-row {
 	margin-top: var(--space-2);
 }
+
+/* Выбор категории знаний рядом с «+» */
+
+.composer-tools {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.knowledge-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	max-width: 260px;
+	height: 30px;
+	padding: 0 10px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	cursor: pointer;
+}
+
+.knowledge-chip[hidden] {
+	display: none;
+}
+
+.knowledge-chip:hover,
+.knowledge-chip[aria-expanded="true"] {
+	background: var(--color-bg-hover);
+	color: var(--color-text);
+}
+
+.knowledge-chip.is-filtered {
+	border-color: var(--color-border-strong);
+	color: var(--color-text);
+}
+
+.knowledge-chip-dot {
+	display: inline-flex;
+}
+
+.knowledge-chip-dot:empty {
+	display: none;
+}
+
+.knowledge-chip-label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.message-scope {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	color: var(--color-text-faint);
+	font-size: var(--text-xs);
+}

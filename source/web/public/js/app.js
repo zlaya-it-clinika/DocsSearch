@@ -3,7 +3,7 @@ import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_AccountPending, 
 import { show_Toast } from './components/toast.js';
 import { create_Button, create_Element, create_Icon } from './lib/dom.js';
 import { apply_Theme, get_Theme } from './preferences.js';
-import { check_IsPending } from './roles.js';
+import { can_OpenAdmin, check_IsPending } from './roles.js';
 import { define_NotFound, define_Route, navigate_To, start_Router } from './router.js';
 import { appState, update_State } from './state.js';
 import { AdminTexts, AppTexts, AuthTexts, PendingTexts, get_ErrorText } from './texts.js';

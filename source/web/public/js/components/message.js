@@ -3,7 +3,8 @@ import { build_LinkedFileUrl } from '../api.js';
 import { copy_ToClipboard, create_Element, create_Icon, create_IconButton, create_Logo, download_TextFile } from '../lib/dom.js';
 import { build_SafeFileName, format_FileSize } from '../lib/format.js';
 import { render_Markdown } from '../lib/markdown.js';
-import { AppTexts, ChatTexts } from '../texts.js';
+import { create_ProcessBadge, get_KnownProcess } from '../processes.js';
+import { AppTexts, ChatTexts, ProcessTexts } from '../texts.js';
 import { create_CitationChip, render_Relevance, render_Sources } from './citations.js';
 import { show_Toast } from './toast.js';
 
@@ -248,11 +249,24 @@ function create_AssistantHeader(kind) {
 	]);
 }
 
+// Где искал ответ: категория, выбранная в чате. При поиске по всем знаниям ядро поле не отдаёт
+function render_SearchScope(message) {
+	const process = message.process;
+	if (!process?.processId) {
+		return null;
+	}
+	const known = get_KnownProcess(process.processId);
+	return create_Element('div', { className: 'message-scope' }, [
+		create_Element('span', { text: `${ProcessTexts.searchedIn}:` }),
+		create_ProcessBadge({ title: process.title, color: known?.color, description: known?.description }),
+	]);
+}
+
 function render_AssistantMessage(message, handlers) {
 	const header = create_AssistantHeader(message.kind);
 	return create_Element('div', { className: 'message message-assistant', dataset: { kind: message.kind ?? '' } }, [
 		header,
-		create_Element('div', { className: 'message-body' }, render_AssistantBody(message, handlers)),
+		create_Element('div', { className: 'message-body' }, [...render_AssistantBody(message, handlers), render_SearchScope(message)]),
 		create_Element('div', { className: 'message-actions' }, [create_CopyButton(build_AssistantCopyText(message))]),
 	]);
 }

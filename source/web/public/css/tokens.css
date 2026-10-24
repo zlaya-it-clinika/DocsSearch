@@ -31,6 +31,15 @@
 	--color-success: #1f6f43;
 	--color-success-bg: #eef7f1;
 
+	/* Метки категорий знаний: приглушённые, читаются и в светлой, и в тёмной теме */
+	--topic-gray: #8f8f8f;
+	--topic-blue: #4c7ce0;
+	--topic-green: #3f9d6b;
+	--topic-amber: #c58a1d;
+	--topic-red: #c9503f;
+	--topic-violet: #8a63d2;
+	--topic-teal: #2f9c9c;
+
 	--color-meter: #4e4e4e;
 	--color-meter-track: #e3e3e3;
 

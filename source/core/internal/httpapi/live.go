@@ -58,8 +58,10 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("GET /documents", api.serve_ListDocuments)
 	routeMux.HandleFunc("POST /documents", api.serve_UploadDocument)
 	routeMux.HandleFunc("POST /documents/import", api.serve_ImportDocuments)
-	routeMux.HandleFunc("GET /processes", api.serve_ListProcesses)
+	routeMux.HandleFunc("GET /processes", api.serve_ListProcessCards)
 	routeMux.HandleFunc("POST /processes", api.serve_CreateProcess)
+	routeMux.HandleFunc("PATCH /processes/{processId}", api.serve_PatchProcess)
+	routeMux.HandleFunc("DELETE /processes/{processId}", api.serve_DeleteProcess)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", api.serve_DocumentFile)
 	routeMux.HandleFunc("GET /blanks/{blankId}/file", api.serve_BlankFile)
 	routeMux.HandleFunc("GET /drafts/{draftId}/file", api.serve_DraftFile)
@@ -400,16 +402,23 @@ func (api *liveAPI) serve_SessionHistory(responseWriter http.ResponseWriter, req
 	for _, message := range messages {
 		rawMessages = append(rawMessages, json.RawMessage(message))
 	}
+	processID, err := api.resolve_MessageProcess(request.Context(), request.PathValue("sessionId"), nil)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string            `json:"sessionId"`
+		ProcessID string            `json:"processId"`
 		Messages  []json.RawMessage `json:"messages"`
-	}{SessionID: request.PathValue("sessionId"), Messages: rawMessages})
+	}{SessionID: request.PathValue("sessionId"), ProcessID: processID, Messages: rawMessages})
 }
 
 func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
-		Text          string   `json:"text"`
-		ProcessID     string   `json:"processId"`
+		Text string `json:"text"`
+		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
+		ProcessID     *string  `json:"processId"`
 		AttachmentIDs []string `json:"attachmentIds"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil || strings.TrimSpace(body.Text) == "" {
@@ -421,18 +430,28 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
 		return
 	}
-	prompts, promptError := api.store.Load_ReplyPrompts(request.Context(), body.ProcessID)
-	if promptError != nil {
-		write_LiveError(responseWriter, promptError)
-		return
-	}
-	replyPrompt := replyPrompts{Select: prompts.Select, Answer: prompts.Answer, Clarify: prompts.Clarify}
-	processID := strings.TrimSpace(body.ProcessID)
 	account, _, templateState, err := api.store.Load_SessionForMessage(request.Context(), token, request.PathValue("sessionId"))
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
+	processID, err := api.resolve_MessageProcess(request.Context(), request.PathValue("sessionId"), body.ProcessID)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	prompts, promptError := api.store.Load_ReplyPrompts(request.Context(), processID)
+	if promptError != nil {
+		write_LiveError(responseWriter, promptError)
+		return
+	}
+	// Выбранная тема: её подсказки модели плюс «карта» темы - название, описание и перечень документов
+	brief, searchedProcess, briefError := api.build_ProcessBrief(request.Context(), processID, account.RoleIDs)
+	if briefError != nil {
+		write_LiveError(responseWriter, briefError)
+		return
+	}
+	replyPrompt := replyPrompts{Select: prompts.Select, Answer: prompts.Answer, Clarify: prompts.Clarify}.with_Brief(brief)
 	session := &sessionRecord{blankFill: decode_FillState(templateState)}
 	var reply assistantReply
 	var documents []shownDocument
@@ -526,6 +545,11 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			write_LiveError(responseWriter, replyError)
 			return
 		}
+		if citationError := api.fill_CitationProcesses(request.Context(), &reply); citationError != nil {
+			write_LiveError(responseWriter, citationError)
+			return
+		}
+		reply = reply_WithProcess(reply, searchedProcess)
 		if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
 			contactChunk, found, contactError := api.store.Find_ContactChunk(request.Context(), embedding, account.UserID, account.RoleIDs, processID)
 			if contactError != nil {
@@ -563,6 +587,12 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
+	}
+	if body.ProcessID != nil {
+		if err := api.store.Save_SessionProcess(request.Context(), request.PathValue("sessionId"), processID); err != nil {
+			write_LiveError(responseWriter, err)
+			return
+		}
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, reply)
 }
@@ -782,34 +812,21 @@ func (api *liveAPI) serve_ImportDocuments(responseWriter http.ResponseWriter, re
 	write_JSONResponse(responseWriter, http.StatusOK, importResponse{Documents: imported, Skipped: listing.Skipped})
 }
 
-func (api *liveAPI) serve_ListProcesses(responseWriter http.ResponseWriter, request *http.Request) {
-	token, found := read_BearerToken(request)
-	if !found {
-		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
-		return
-	}
-	foundProcesses, err := api.store.List_Processes(request.Context(), token)
-	if err != nil {
-		write_LiveError(responseWriter, err)
-		return
-	}
-	lines := make([]processLine, 0, len(foundProcesses))
-	for _, process := range foundProcesses {
-		lines = append(lines, processLine{ProcessID: process.ProcessID, Title: process.Title})
-	}
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Processes []processLine `json:"processes"`
-	}{Processes: lines})
-}
-
 func (api *liveAPI) serve_CreateProcess(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Title         string `json:"title"`
+		Description   string `json:"description"`
+		Color         string `json:"color"`
 		SelectPrompt  string `json:"selectPrompt"`
 		AnswerPrompt  string `json:"answerPrompt"`
 		ClarifyPrompt string `json:"clarifyPrompt"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	color, colorOK := livestore.Normalize_ProcessColor(body.Color)
+	if !colorOK {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
 	}
@@ -823,9 +840,15 @@ func (api *liveAPI) serve_CreateProcess(responseWriter http.ResponseWriter, requ
 		write_LiveError(responseWriter, err)
 		return
 	}
+	if err := api.store.Set_ProcessMeta(request.Context(), created.ProcessID, body.Description, color); err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
 	write_JSONResponse(responseWriter, http.StatusOK, processDetail{
 		ProcessID:     created.ProcessID,
 		Title:         created.Title,
+		Description:   strings.TrimSpace(body.Description),
+		Color:         color,
 		SelectPrompt:  created.SelectPrompt,
 		AnswerPrompt:  created.AnswerPrompt,
 		ClarifyPrompt: created.ClarifyPrompt,

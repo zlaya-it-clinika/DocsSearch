@@ -160,7 +160,8 @@ export function fetch_ChatSession(sessionId) {
 
 export function send_ChatMessage(sessionId, text, extra = {}) {
 	const json = { text };
-	if (extra.processId) {
+	// Пустая строка - все категории, её тоже отправляем: ядро запоминает выбор в сессии
+	if (typeof extra.processId === 'string') {
 		json.processId = extra.processId;
 	}
 	if (Array.isArray(extra.attachmentIds) && extra.attachmentIds.length > 0) {
@@ -233,6 +234,15 @@ export function list_Processes() {
 
 export function create_Process(fields) {
 	return request_Api('POST', '/processes', { json: fields });
+}
+
+// fields: title, description, color, selectPrompt, answerPrompt, clarifyPrompt
+export function update_Process(processId, fields) {
+	return request_Api('PATCH', `/processes/${encode_Segment(processId)}`, { json: fields });
+}
+
+export function delete_Process(processId) {
+	return request_Api('DELETE', `/processes/${encode_Segment(processId)}`);
 }
 
 export function list_Roles() {

@@ -1,6 +1,7 @@
 // Экран чата: история сессии, отправка вопросов, проверка черновика.
 // Один и тот же экран работает на полной странице и в виджете (compact).
-import { check_Draft, create_ChatSession, fetch_ChatSession, list_Processes, send_ChatMessage, upload_SessionAttachment } from '../api.js';
+import { check_Draft, create_ChatSession, fetch_ChatSession, send_ChatMessage, upload_SessionAttachment } from '../api.js';
+import { create_ProcessPicker } from '../components/process-picker.js';
 import { create_Composer } from '../components/composer.js';
 import { MessageKinds, render_Message, render_PendingMessage } from '../components/message.js';
 import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_LoadingBlock } from '../lib/dom.js';
@@ -29,7 +30,6 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 	let loading = Boolean(sessionId);
 	let destroyed = false;
 	let dragDepth = 0;
-	let processId = '';
 
 	const allowCheck = has_Permission(user, config, Permissions.draftsCheck);
 	const allowAssist = has_Permission(user, config, Permissions.draftsAssist);
@@ -40,21 +40,18 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 	const column = create_Element('div', { className: 'chat-column' }, [greeting, messagesList]);
 	const scroll = create_Element('div', { className: 'chat-scroll' }, [column]);
 
+	// Категория знаний для поиска. Для открытого чата её потом подставит история сессии
+	const processPicker = create_ProcessPicker({ user });
 	const composer = create_Composer({
 		onSubmit: (payload) => handle_Submit(payload),
 		allowCheck,
 		allowAssist,
 		config,
+		tools: [processPicker.element],
 	});
-	const processSelect = create_Element('select', {
-		className: 'select process-select',
-		attrs: { 'aria-label': ChatTexts.processLabel },
-	});
-	processSelect.hidden = true;
 	const quickActions = create_Element('div', { className: 'quick-actions' });
 	quickActions.hidden = true;
 	const footer = create_Element('div', { className: 'chat-footer' }, [
-		processSelect,
 		quickActions,
 		canChat ? composer.element : create_Element('div', { className: 'callout-hint', text: ChatTexts.chatDenied }),
 		create_Element('div', { className: 'chat-disclaimer', text: ChatTexts.disclaimer }),
@@ -95,21 +92,6 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			onClick: () => composer.set_Text(text),
 		}));
 	}
-
-	processSelect.addEventListener('change', () => {
-		processId = processSelect.value;
-	});
-	list_Processes().then((payload) => {
-		const processes = Array.isArray(payload?.processes) ? payload.processes : [];
-		if (destroyed || processes.length === 0) {
-			return;
-		}
-		processSelect.append(
-			create_Element('option', { text: ChatTexts.processAll, attrs: { value: '' } }),
-			...processes.map((process) => create_Element('option', { text: process.title, attrs: { value: process.processId } })),
-		);
-		processSelect.hidden = false;
-	}).catch(() => {});
 
 	function scroll_ToBottom() {
 		requestAnimationFrame(() => {
@@ -176,6 +158,9 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 				return;
 			}
 			messages = Array.isArray(payload?.messages) ? payload.messages : [];
+			if (typeof payload?.processId === 'string') {
+				processPicker.set_ProcessId(payload.processId);
+			}
 			loading = false;
 			render_View();
 			scroll_ToBottom();
@@ -210,7 +195,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		scroll_ToBottom();
 		try {
 			const activeSessionId = await ensure_Session(text);
-			const reply = await send_ChatMessage(activeSessionId, text, { processId });
+			const reply = await send_ChatMessage(activeSessionId, text, { processId: processPicker.get_ProcessId() });
 			messages.push({ ...reply, role: 'assistant' });
 			history?.remember_Chat(activeSessionId, build_ChatTitle(find_FirstQuestion()));
 		} catch (error) {
@@ -283,7 +268,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			const uploaded = await upload_SessionAttachment(activeSessionId, file);
 			requestMessage.attachments = [{ attachmentId: uploaded.attachmentId, fileName: uploaded.fileName }];
 			const reply = await send_ChatMessage(activeSessionId, question, {
-				processId,
+				processId: processPicker.get_ProcessId(),
 				attachmentIds: [uploaded.attachmentId],
 			});
 			messages.push({ ...reply, role: 'assistant' });

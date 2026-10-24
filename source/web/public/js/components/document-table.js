@@ -2,6 +2,7 @@
 // columns: title, owner, edition, access, uploaded. Действия показываются только при наличии обработчика и прав.
 import { build_DocumentFileUrl, delete_Document } from '../api.js';
 import { check_CanDelete, check_IsPersonal } from '../documents.js';
+import { create_ProcessBadge, get_KnownProcess } from '../processes.js';
 import { create_Element, create_Icon, create_IconButton } from '../lib/dom.js';
 import { format_DateTime } from '../lib/format.js';
 import { Roles, get_DocumentAudience, get_DocumentAudienceLabel } from '../roles.js';
@@ -47,7 +48,9 @@ function render_Cell(column, document, config, processTitles) {
 		case 'uploaded':
 			return create_Element('td', { className: 'time-cell', text: format_DateTime(document.uploadedAt) || AppTexts.notSpecified });
 		case 'process':
-			return create_Element('td', { className: 'table-cell-muted', text: processTitles[document.processId] || document.processId || AppTexts.notSpecified });
+			return create_Element('td', {}, [document.processId
+				? create_ProcessBadge(get_KnownProcess(document.processId) ?? { title: processTitles[document.processId] || document.processId, color: 'gray' })
+				: create_Element('span', { className: 'table-cell-muted', text: AppTexts.notSpecified })]);
 		default:
 			return create_Element('td');
 	}

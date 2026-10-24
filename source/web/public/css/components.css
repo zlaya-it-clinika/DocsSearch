@@ -360,3 +360,103 @@ a.chip:hover {
 .link-button:hover {
 	color: var(--color-text-muted);
 }
+
+/* Категории знаний: точка цвета, метка, пункты выбора, выбор цвета */
+
+.topic-dot {
+	flex: none;
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--topic-gray);
+}
+
+.topic-dot-blue { background: var(--topic-blue); }
+.topic-dot-green { background: var(--topic-green); }
+.topic-dot-amber { background: var(--topic-amber); }
+.topic-dot-red { background: var(--topic-red); }
+.topic-dot-violet { background: var(--topic-violet); }
+.topic-dot-teal { background: var(--topic-teal); }
+
+.topic-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	padding: 2px 8px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-pill);
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	line-height: 1.5;
+	vertical-align: middle;
+}
+
+.topic-badge-text {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.menu-item.topic-option {
+	gap: var(--space-2);
+	min-width: 260px;
+	max-width: 340px;
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+
+.topic-option-spacer {
+	flex: none;
+	width: 16px;
+}
+
+.topic-option-text {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.topic-option-title {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.topic-option-hint {
+	color: var(--color-text-faint);
+	font-size: var(--text-xs);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.color-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.color-swatch {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	height: 30px;
+	border: 1px solid var(--color-border);
+	border-radius: 50%;
+	background: transparent;
+	cursor: pointer;
+}
+
+.color-swatch .topic-dot {
+	width: 14px;
+	height: 14px;
+}
+
+.color-swatch[aria-checked="true"] {
+	border-color: var(--color-text);
+	box-shadow: 0 0 0 1px var(--color-text);
+}

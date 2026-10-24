@@ -11,7 +11,8 @@ const maxInputHeight = 220;
 
 // onSubmit({ text, file }) должен вернуть Promise, поле блокируется до его завершения
 // config: настройки веб-сервера, из них берутся допустимые форматы и размер файла
-export function create_Composer({ onSubmit, allowCheck = true, allowAssist = false, config }) {
+// tools: дополнительные кнопки рядом с «+», например выбор категории знаний
+export function create_Composer({ onSubmit, allowCheck = true, allowAssist = false, config, tools = [] }) {
 	let attachedFile = null;
 	let attachMode = allowCheck ? 'check' : 'assist';
 	let busy = false;
@@ -59,7 +60,7 @@ export function create_Composer({ onSubmit, allowCheck = true, allowAssist = fal
 		attachmentsRow,
 		textarea,
 		create_Element('div', { className: 'composer-toolbar' }, [
-			create_Element('div', {}, [attachButton, fileInput]),
+			create_Element('div', { className: 'composer-tools' }, [attachButton, fileInput, ...tools]),
 			sendButton,
 		]),
 	]);

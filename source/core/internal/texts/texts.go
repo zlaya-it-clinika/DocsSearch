@@ -43,6 +43,10 @@ const (
 
 	ProcessDocuments      = "documents"
 	ProcessTitleDocuments = "Документооборот"
+	ProcessDefaultColor   = "gray"
+	SeedProcessColor      = "blue"
+	// Сколько названий документов процесса попадает в подсказку модели
+	ProcessMapLimit = 40
 
 	ErrorInvalidCredentials = "invalid_credentials"
 	ErrorUnauthorized       = "unauthorized"
@@ -268,8 +272,12 @@ const (
 	LiveSectionLabel   = "Раздел"
 	LiveParagraphLabel = "Пункт"
 	LiveAppendixLabel  = "Приложение"
-	LiveDraftPrompt    = "Перепиши переданную часть черновика по просьбе сотрудника. Опирайся только на переданные фрагменты инструкции и не добавляй фактов, которых в них нет. Если фрагментов нет, правь формулировку, но не выдумывай пункты. Верни только JSON {\"draftText\":\"новый текст части\",\"changes\":[{\"text\":\"что изменено\",\"paragraph\":\"номер пункта\"}]}. paragraph указывай только если пункт есть во фрагментах. changes может быть пустым массивом."
-	LiveDraftPartLabel = "Часть черновика"
+
+	// «Карта» выбранного процесса: добавляется к подсказкам модели, чтобы она знала, что есть в теме
+	LiveProcessLabel    = "Тема поиска"
+	LiveProcessContents = "Документы темы"
+	LiveDraftPrompt     = "Перепиши переданную часть черновика по просьбе сотрудника. Опирайся только на переданные фрагменты инструкции и не добавляй фактов, которых в них нет. Если фрагментов нет, правь формулировку, но не выдумывай пункты. Верни только JSON {\"draftText\":\"новый текст части\",\"changes\":[{\"text\":\"что изменено\",\"paragraph\":\"номер пункта\"}]}. paragraph указывай только если пункт есть во фрагментах. changes может быть пустым массивом."
+	LiveDraftPartLabel  = "Часть черновика"
 
 	DraftRevisionKept = "Черновик обновлен."
 

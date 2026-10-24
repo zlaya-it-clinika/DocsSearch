@@ -1,5 +1,6 @@
 // Окно загрузки документа: новый общий или личный документ, либо новая редакция существующего.
 import { list_Processes, list_Roles, upload_Document } from '../api.js';
+import { DefaultProcessId } from '../processes.js';
 import { Scopes } from '../documents.js';
 import { create_Button, create_Element, create_Icon } from '../lib/dom.js';
 import { build_AcceptAttribute, format_AllowedExtensions, validate_UploadFile } from '../lib/files.js';
@@ -24,8 +25,9 @@ function pick_Title(scope, isNewEdition) {
 	return scope === Scopes.personal ? DocumentsTexts.uploadPersonalTitle : DocumentsTexts.uploadGlobalTitle;
 }
 
-// scope: global или personal. document задан - загружаем новую редакцию с тем же названием
-export async function open_DocumentUploadForm({ config, scope, document = null, onUploaded }) {
+// scope: global или personal. document задан - загружаем новую редакцию с тем же названием.
+// presetProcessId - категория знаний, выбранная заранее (например, фильтр в админке)
+export async function open_DocumentUploadForm({ config, scope, document = null, onUploaded, presetProcessId = '' }) {
 	let selectedFile = null;
 	const isNewEdition = Boolean(document);
 	const isGlobal = scope === Scopes.global;
@@ -65,13 +67,13 @@ export async function open_DocumentUploadForm({ config, scope, document = null, 
 		create_Element('option', { text: RoleTexts.documentForAll, attrs: { value: Roles.user } }),
 		create_Element('option', { text: RoleTexts.documentForAdmins, attrs: { value: Roles.admin } }),
 	]);
-	const processSelect = create_Element('select', { className: 'select', attrs: { id: 'document-process' } }, [
-		create_Element('option', { text: DocumentsTexts.processAll, attrs: { value: '' } }),
-		...processes.map((process) => create_Element('option', {
+	// Без выбора ядро кладёт документ в документооборот, поэтому пустого пункта нет
+	const chosenProcess = document?.processId || presetProcessId || DefaultProcessId;
+	const processSelect = create_Element('select', { className: 'select', attrs: { id: 'document-process' } },
+		processes.map((process) => create_Element('option', {
 			text: process.title,
-			attrs: { value: process.processId, selected: document?.processId === process.processId },
-		})),
-	]);
+			attrs: { value: process.processId, selected: chosenProcess === process.processId },
+		})));
 	const visibleToAllInput = create_Element('input', { attrs: { id: 'document-visible-all', type: 'checkbox' } });
 	const roleBoxes = roles.map((role) => {
 		const input = create_Element('input', {
