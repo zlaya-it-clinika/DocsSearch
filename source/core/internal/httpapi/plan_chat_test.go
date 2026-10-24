@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -80,5 +81,62 @@ func TestClassify_PlanDocument(t *testing.T) {
 	}
 	if _, found := classify_PlanDocument(nil, documents, "любая просьба"); found {
 		t.Fatal("no model, no choice")
+	}
+}
+
+// Вопросы документа одной карточкой: ядро отдает все поля, ответы приходят пачкой,
+// в истории реплика сотрудника хранит подписи полей. Выбор документа - кнопкой с названием
+func TestStubDocumentQuestionsInOneTurn(t *testing.T) {
+	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
+	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
+	sessionID := createSession(t, handler, employeeToken)
+
+	choice := postModeMessage(t, handler, employeeToken, sessionID, "Надо решить вопрос с ноутбуком", texts.ChatModePlan)
+	if choice.Kind != texts.KindTemplateChoice || len(choice.Options) < 8 || choice.Options[0] != "Служебная записка" {
+		t.Fatalf("choice options %+v", choice.Options)
+	}
+	started := postMessage(t, handler, employeeToken, sessionID, "Деловое письмо")
+	if started.Template == nil || started.Template.ID != "letter" || len(started.Template.Questions) != 6 || started.Template.Questions[0].Field != texts.LayoutFieldAddressee {
+		t.Fatalf("letter questions %+v", started.Template)
+	}
+
+	send := func(text string, answers []map[string]string) assistantReply {
+		response := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]any{"text": text, "answers": answers})
+		if response.Code != http.StatusOK {
+			t.Fatalf("answers %d %s", response.Code, response.Body.String())
+		}
+		return decodeJSON[assistantReply](t, response)
+	}
+	partial := send("Адресат: АО Профиль", []map[string]string{
+		{"field": texts.LayoutFieldAddressee, "value": "АО \"Профиль\", генеральный директор Сидоров П.П."},
+		{"field": texts.LayoutFieldSubject, "value": "о предоставлении данных"},
+		{"field": texts.LayoutFieldPoints, "value": ""},
+		{"field": texts.LayoutFieldSigner, "value": "Директор Петров А.Б."},
+		{"field": texts.LayoutFieldAttach, "value": "нет"},
+	})
+	if partial.Kind != texts.KindTemplateField || partial.Template == nil || len(partial.Template.Questions) != 2 || partial.Template.Questions[0].Field != texts.LayoutFieldPoints {
+		t.Fatalf("remaining questions %+v", partial.Template)
+	}
+	ready := send("Суть: просим данные", []map[string]string{
+		{"field": texts.LayoutFieldPoints, "value": "Просим направить данные до 01.09.2026."},
+		{"field": texts.LayoutFieldExecutor, "value": "нет"},
+	})
+	if ready.Kind != texts.KindTemplateReady || ready.Template == nil || ready.Template.DraftLink == "" {
+		t.Fatalf("ready %+v", ready)
+	}
+
+	var history struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	decodeInto(t, doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil), &history)
+	var answered struct {
+		Text    string       `json:"text"`
+		Answers []answerLine `json:"answers"`
+	}
+	if err := json.Unmarshal(history.Messages[4], &answered); err != nil {
+		t.Fatal(err)
+	}
+	if answered.Text != "Адресат: АО Профиль" || len(answered.Answers) != 5 || answered.Answers[0].Label != "Адресат" || answered.Answers[3].Label != "Подписант" {
+		t.Fatalf("stored answers %+v", answered)
 	}
 }

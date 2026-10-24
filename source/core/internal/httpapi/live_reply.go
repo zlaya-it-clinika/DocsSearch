@@ -19,6 +19,8 @@ var fragmentNumber = regexp.MustCompile(`\d+`)
 type chatTurn struct {
 	Role string
 	Text string
+	// Вид ответа ассистента: по нему видно, что следующая реплика - ответ на уточнение
+	Kind string
 }
 
 type replyPrompts struct {
@@ -50,13 +52,17 @@ func build_LiveAssistantReply(chatter interface {
 		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
 	}
 	// Близкие фрагменты разных документов - еще не повод переспрашивать: часто нужный пункт один,
-	// а второй документ лишь похож по словам. Уточняем, только если модели нужны фрагменты разных документов
-	if kind == texts.KindClarify && count_Documents(selected) > 1 {
+	// а второй документ лишь похож по словам. Уточняем, только если модели нужны фрагменты разных документов.
+	// На ответ пользователя на уточнение второй раз не переспрашиваем
+	if kind == texts.KindClarify && count_Documents(selected) > 1 && !answers_Clarify(history) {
 		text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Clarify, texts.LiveClarifyPrompt), question, history, selected))
 		if err != nil || strings.TrimSpace(text) == "" {
 			return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 		}
-		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
+		reply := build_PlainReply(texts.KindClarify, strings.TrimSpace(text))
+		// Варианты ответа: названия документов, между которыми выбирает пользователь
+		reply.Options = document_Titles(selected)
+		return reply, []shownDocument{}, nil
 	}
 	answerPrompt := prompt_OrText(prompts.Answer, texts.LiveAnswerPrompt) + "\n" + texts.LiveAnswerRefusalRule
 	text, err := chatter.Complete_Chat(build_ChatMessages(answerPrompt, question, history, selected))
@@ -149,6 +155,44 @@ func count_Documents(chunks []livestore.SimilarChunk) int {
 	return len(documents)
 }
 
+// Названия документов в порядке фрагментов, без повторов
+func document_Titles(chunks []livestore.SimilarChunk) []string {
+	titles := []string{}
+	seen := map[string]bool{}
+	for _, chunk := range chunks {
+		title := strings.TrimSpace(chunk.Title)
+		if title == "" || seen[title] {
+			continue
+		}
+		seen[title] = true
+		titles = append(titles, title)
+	}
+	return titles
+}
+
+// Последняя реплика ассистента в истории - уточняющий вопрос
+func answers_Clarify(history []chatTurn) bool {
+	if len(history) == 0 {
+		return false
+	}
+	last := history[len(history)-1]
+	return last.Role == "assistant" && last.Kind == texts.KindClarify
+}
+
+// Ответ на уточнение обычно короткий («про исходящие»), и искать по нему одному нельзя.
+// Ищем по исходному вопросу вместе с уточнением
+func build_ClarifiedQuestion(history []chatTurn, text string) string {
+	if !answers_Clarify(history) {
+		return text
+	}
+	for index := len(history) - 2; index >= 0; index-- {
+		if history[index].Role == "user" {
+			return history[index].Text + "\n" + text
+		}
+	}
+	return text
+}
+
 func chunks_AtIndexes(chunks []livestore.SimilarChunk, indexes []int) []livestore.SimilarChunk {
 	chosen := map[int]bool{}
 	for _, index := range indexes {
@@ -237,6 +281,7 @@ func read_ChatHistory(rawMessages [][]byte) []chatTurn {
 		var stored struct {
 			Role string `json:"role"`
 			Text string `json:"text"`
+			Kind string `json:"kind"`
 		}
 		if err := json.Unmarshal(raw, &stored); err != nil {
 			continue
@@ -247,7 +292,7 @@ func read_ChatHistory(rawMessages [][]byte) []chatTurn {
 		if strings.TrimSpace(stored.Text) == "" {
 			continue
 		}
-		turns = append(turns, chatTurn{Role: stored.Role, Text: stored.Text})
+		turns = append(turns, chatTurn{Role: stored.Role, Text: stored.Text, Kind: stored.Kind})
 	}
 	return turns
 }

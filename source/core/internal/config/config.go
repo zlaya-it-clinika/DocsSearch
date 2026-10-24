@@ -32,6 +32,9 @@ type Config struct {
 	// LAYOUT_FORMAT_PRIORITY: профили оформления макетов через запятую, первый важнее (instruction,gost).
 	// Пусто - порядок задают сами профили: Инструкция по ДОУ, затем ГОСТ
 	LayoutFormatPriority []string
+	// STANDARD_DOCS_DIR: каталог стандартного набора документов компании (source/docs).
+	// Набор загружается в базу знаний при каждом запуске боевого режима. Пусто - набора нет
+	StandardDocsDir string
 }
 
 func Load() Config {
@@ -57,6 +60,7 @@ func Load() Config {
 		StubWithoutUsers:      !read_Boolean("STUB_SEED_USERS", true),
 		AuthDefaults:          read_AuthDefaults(),
 		LayoutFormatPriority:  read_List("LAYOUT_FORMAT_PRIORITY"),
+		StandardDocsDir:       strings.TrimSpace(os.Getenv("STANDARD_DOCS_DIR")),
 	}
 }
 

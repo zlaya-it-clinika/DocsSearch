@@ -50,12 +50,14 @@ type Step struct {
 	Field      string
 	FieldLabel string
 	Question   string
-	Ready      bool
-	Cancelled  bool
-	DraftText  string
-	Docx       []byte
-	FileName   string
-	State      State
+	// Все поля без ответа, начиная с текущего: клиент задает их одной карточкой
+	Questions []Question
+	Ready     bool
+	Cancelled bool
+	DraftText string
+	Docx      []byte
+	FileName  string
+	State     State
 }
 
 func Start_Layout(info texts.LayoutInfo, request string, organization Organization, format Format, chatter Chatter, now time.Time) Step {
@@ -115,6 +117,7 @@ func ask_Field(info texts.LayoutInfo, state State, field texts.LayoutField, orga
 		Field:      field.Key,
 		FieldLabel: field.Label,
 		Question:   build_Question(field, organization),
+		Questions:  build_Questions(info, state, organization),
 		State:      state,
 	}
 }

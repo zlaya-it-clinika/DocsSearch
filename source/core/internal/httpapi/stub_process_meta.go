@@ -30,12 +30,15 @@ func (stubStore *stub) process_Card(process *processRecord, viewer *userRecord) 
 	return card
 }
 
-// Процесс сессии мог быть удалён: тогда чат снова ищет по всем
+// Процесс сессии мог быть удалён: он выпадает из выбора, пустой выбор - поиск по всем
 func (stubStore *stub) saved_SessionProcess(session *sessionRecord) string {
-	if session.processID == "" || stubStore.processesByID[session.processID] == nil {
-		return ""
+	known := []string{}
+	for _, id := range split_ProcessSelection(session.processID) {
+		if stubStore.processesByID[id] != nil {
+			known = append(known, id)
+		}
 	}
-	return session.processID
+	return join_ProcessSelection(known)
 }
 
 // Фиксированный ответ заглушки опирается на инструкцию документооборота.
@@ -46,7 +49,7 @@ func (stubStore *stub) apply_StubProcess(reply assistantReply, processID string)
 	}
 	if reply.Kind == texts.KindAnswer {
 		for _, item := range reply.Citations {
-			if document := stubStore.documentsByID[item.DocumentID]; document != nil && document.processID != processID {
+			if document := stubStore.documentsByID[item.DocumentID]; document != nil && !check_ProcessSelected(processID, document.processID) {
 				reply = build_PlainReply(texts.KindFallback, texts.FallbackText)
 				break
 			}
@@ -57,8 +60,16 @@ func (stubStore *stub) apply_StubProcess(reply assistantReply, processID string)
 			reply.Citations[index].ProcessID = document.processID
 		}
 	}
-	if process := stubStore.processesByID[processID]; process != nil {
-		reply = reply_WithProcess(reply, &processRef{ProcessID: process.id, Title: process.title})
+	ids := []string{}
+	titles := []string{}
+	for _, id := range split_ProcessSelection(processID) {
+		if process := stubStore.processesByID[id]; process != nil {
+			ids = append(ids, process.id)
+			titles = append(titles, process.title)
+		}
+	}
+	if len(ids) > 0 {
+		reply = reply_WithProcess(reply, build_ProcessRef(ids, titles))
 	}
 	return reply
 }

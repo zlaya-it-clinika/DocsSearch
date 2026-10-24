@@ -26,6 +26,9 @@ type UploadInput struct {
 	ProcessID    string
 	VisibleToAll bool
 	RoleIDs      []string
+	// Документ стандартного набора и SHA-256 его файла в наборе
+	Standard     bool
+	StandardHash string
 }
 
 type UploadResult struct {
@@ -38,6 +41,12 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 	if _, err := store.Find_AccountByToken(ctx, token); err != nil {
 		return UploadResult{}, err
 	}
+	return store.index_Document(ctx, input, true)
+}
+
+// withVectors false - фрагменты сохраняются без вектора, их досчитывает Start_PendingReindex.
+// Так стандартный набор загружается при запуске, даже если Ollama еще недоступна
+func (store *LiveStore) index_Document(ctx context.Context, input UploadInput, withVectors bool) (UploadResult, error) {
 	// Таблица данных .docx (например, Матрица визирования) режется по строкам с подписями столбцов
 	pieces, err := chunk.Extract_DocumentChunks(input.FileName, input.Body)
 	if errors.Is(err, chunk.ErrUnsupportedFile) {
@@ -46,13 +55,16 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 	if err != nil {
 		return UploadResult{}, ErrUnsupportedFile
 	}
-	contents := make([]string, 0, len(pieces))
-	for _, piece := range pieces {
-		contents = append(contents, chunk_EmbedText(input.Title, piece.Section, piece.Paragraph, piece.Appendix, piece.Content))
-	}
-	vectors, err := store.embed_Texts(contents)
-	if err != nil {
-		return UploadResult{}, err
+	vectors := make([][]float32, len(pieces))
+	if withVectors {
+		contents := make([]string, 0, len(pieces))
+		for _, piece := range pieces {
+			contents = append(contents, chunk_EmbedText(input.Title, piece.Section, piece.Paragraph, piece.Appendix, piece.Content))
+		}
+		vectors, err = store.embed_Texts(contents)
+		if err != nil {
+			return UploadResult{}, err
+		}
 	}
 	tx, err := store.pool.Begin(ctx)
 	if err != nil {
@@ -65,6 +77,15 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 		SELECT document_id FROM documents
 		WHERE title = $1 AND scope = $2 AND source_id = '' AND (($2 = 'global') OR owner_id = $3)`,
 		input.Title, input.Scope, input.OwnerID).Scan(&documentID)
+	if err == nil {
+		// Прежняя редакция с другим содержимым уходит в архив. Тот же файл повторно архив не засоряет
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO document_editions (document_id, edition, file_name, content_type, body, uploaded_at)
+			SELECT document_id, edition, file_name, content_type, body, uploaded_at
+			FROM documents WHERE document_id = $1 AND body <> $2`, documentID, input.Body); err != nil {
+			return UploadResult{}, err
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		number, nextError := next_IDTx(ctx, tx, counterDocument)
 		if nextError != nil {
@@ -72,17 +93,19 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 		}
 		documentID = "doc-" + strconv.Itoa(number)
 		_, err = tx.Exec(ctx, `
-			INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, process_id, uploaded_at, file_name, content_type, body, visible_to_all)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9, $10, $11)`,
-			documentID, input.Title, input.Edition, input.AccessLevel, input.Scope, input.OwnerID, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll)
+			INSERT INTO documents (document_id, title, edition, access_level, scope, owner_id, process_id, uploaded_at, file_name, content_type, body, visible_to_all, standard, standard_hash)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8, $9, $10, $11, $12, $13)`,
+			documentID, input.Title, input.Edition, input.AccessLevel, input.Scope, input.OwnerID, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll, input.Standard, input.StandardHash)
 	} else if err != nil {
 		return UploadResult{}, err
 	} else {
+		// Новая редакция стандартного документа от администратора остается в наборе: флаг и хеш файла набора не меняются
 		_, err = tx.Exec(ctx, `
 			UPDATE documents
-			SET edition = $2, access_level = $3, process_id = $4, file_name = $5, content_type = $6, body = $7, uploaded_at = now(), visible_to_all = $8
+			SET edition = $2, access_level = $3, process_id = $4, file_name = $5, content_type = $6, body = $7, uploaded_at = now(), visible_to_all = $8,
+				standard = standard OR $9, standard_hash = CASE WHEN $9 THEN $10 ELSE standard_hash END
 			WHERE document_id = $1`,
-			documentID, input.Edition, input.AccessLevel, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll)
+			documentID, input.Edition, input.AccessLevel, upload_ProcessID(input.ProcessID), input.FileName, input.ContentType, input.Body, input.VisibleToAll, input.Standard, input.StandardHash)
 	}
 	if err != nil {
 		if is_UniqueViolation(err) {
@@ -105,10 +128,15 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 		return UploadResult{}, err
 	}
 	for index, piece := range pieces {
+		var embedding *string
+		if len(vectors[index]) > 0 {
+			formatted := format_Vector(vectors[index])
+			embedding = &formatted
+		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO chunks (document_id, section, paragraph, appendix, access_level, scope, owner_id, content, embedding)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)`,
-			documentID, piece.Section, piece.Paragraph, piece.Appendix, input.AccessLevel, input.Scope, input.OwnerID, piece.Content, format_Vector(vectors[index]))
+			documentID, piece.Section, piece.Paragraph, piece.Appendix, input.AccessLevel, input.Scope, input.OwnerID, piece.Content, embedding)
 		if err != nil {
 			return UploadResult{}, err
 		}
@@ -178,7 +206,8 @@ func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeF
 	rows, err := store.pool.Query(ctx, `
 		SELECT d.document_id, d.title, d.edition, d.access_level, d.scope, d.owner_id,
 			COALESCE(u.display_name, ''), d.uploaded_at, d.process_id, d.visible_to_all,
-			COALESCE((SELECT array_agg(dr.role_id ORDER BY dr.role_id) FROM document_roles dr WHERE dr.document_id = d.document_id), '{}')
+			COALESCE((SELECT array_agg(dr.role_id ORDER BY dr.role_id) FROM document_roles dr WHERE dr.document_id = d.document_id), '{}'),
+			d.standard, (SELECT count(*) FROM document_editions e WHERE e.document_id = d.document_id)
 		FROM documents d
 		LEFT JOIN users u ON u.user_id = d.owner_id AND d.owner_id <> ''
 		WHERE
@@ -191,7 +220,7 @@ func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeF
 					OR (d.scope = 'personal' AND d.owner_id = $1)
 				))
 			)
-			AND ($4 = '' OR d.process_id = $4)
+			AND ($4 = '' OR d.process_id = ANY(string_to_array($4, ',')))
 		ORDER BY d.document_id`, account.UserID, scopeFilter, role_Filter(account.RoleIDs), processFilter)
 	if err != nil {
 		return nil, err
@@ -200,7 +229,7 @@ func (store *LiveStore) List_VisibleDocuments(ctx context.Context, token, scopeF
 	lines := []DocumentLine{}
 	for rows.Next() {
 		var line DocumentLine
-		if err := rows.Scan(&line.DocumentID, &line.Title, &line.Edition, &line.AccessLevel, &line.Scope, &line.OwnerID, &line.OwnerName, &line.UploadedAt, &line.ProcessID, &line.VisibleToAll, &line.RoleIDs); err != nil {
+		if err := rows.Scan(&line.DocumentID, &line.Title, &line.Edition, &line.AccessLevel, &line.Scope, &line.OwnerID, &line.OwnerName, &line.UploadedAt, &line.ProcessID, &line.VisibleToAll, &line.RoleIDs, &line.Standard, &line.ArchivedEditions); err != nil {
 			return nil, err
 		}
 		if line.RoleIDs == nil {
@@ -247,10 +276,11 @@ func (store *LiveStore) Delete_Document(ctx context.Context, token, documentID s
 	var ownerID string
 	var visibleToAll bool
 	var documentRoleIDs []string
+	var standard bool
 	err = store.pool.QueryRow(ctx, `
 		SELECT scope, owner_id, visible_to_all,
-			COALESCE((SELECT array_agg(role_id) FROM document_roles WHERE document_id = $1), '{}')
-		FROM documents WHERE document_id = $1`, documentID).Scan(&scope, &ownerID, &visibleToAll, &documentRoleIDs)
+			COALESCE((SELECT array_agg(role_id) FROM document_roles WHERE document_id = $1), '{}'), standard
+		FROM documents WHERE document_id = $1`, documentID).Scan(&scope, &ownerID, &visibleToAll, &documentRoleIDs, &standard)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -262,6 +292,10 @@ func (store *LiveStore) Delete_Document(ctx context.Context, token, documentID s
 	}
 	if !document_CanDelete(account, scope, ownerID) {
 		return ErrAccessDenied
+	}
+	// Стандартный набор всегда в базе знаний: его можно заменить новой редакцией, но не удалить
+	if standard {
+		return ErrStandardDocument
 	}
 	_, err = store.pool.Exec(ctx, `DELETE FROM documents WHERE document_id = $1`, documentID)
 	return err
@@ -304,7 +338,7 @@ func (store *LiveStore) Find_ChunksBySimilarity(ctx context.Context, embedding [
 		WHERE ((d.scope = 'global' AND `+global_VisibleSQL("$2")+`)
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND NOT `+contacts.Title_SQLCondition()+`
-			AND ($4 = '' OR d.process_id = $4)
+			AND ($4 = '' OR d.process_id = ANY(string_to_array($4, ',')))
 			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $5`, role_Filter(roleIDs), userID, processID)
@@ -322,7 +356,7 @@ func (store *LiveStore) Find_ClosedGlobalChunks(ctx context.Context, embedding [
 				WHERE dr.document_id = d.document_id AND dr.role_id = ANY($2::text[])
 			)
 			AND NOT `+contacts.Title_SQLCondition()+`
-			AND ($3 = '' OR d.process_id = $3)
+			AND ($3 = '' OR d.process_id = ANY(string_to_array($3, ',')))
 			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $4`, role_Filter(roleIDs), processID)
@@ -337,7 +371,7 @@ func (store *LiveStore) Find_ContactChunk(ctx context.Context, embedding []float
 		WHERE ((d.scope = 'global' AND `+global_VisibleSQL("$2")+`)
 			OR (d.scope = 'personal' AND d.owner_id = $3))
 			AND `+contacts.Title_SQLCondition()+`
-			AND ($4 = '' OR d.process_id = $4)
+			AND ($4 = '' OR d.process_id = ANY(string_to_array($4, ',')))
 			AND c.embedding IS NOT NULL
 		ORDER BY c.embedding <=> $1::vector
 		LIMIT $5`, role_Filter(roleIDs), userID, processID)
@@ -397,4 +431,37 @@ func next_IDTx(ctx context.Context, tx queryRower, name string) (int, error) {
 	var value int
 	err := tx.QueryRow(ctx, `UPDATE id_counters SET value = value + 1 WHERE name = $1 RETURNING value - 1`, name).Scan(&value)
 	return value, err
+}
+
+// Начало документа для справки о нем: первые фрагменты по порядку и разделы в порядке появления.
+// Права проверяет вызывающий: документ берется из списка видимых сотруднику
+func (store *LiveStore) Read_DocumentOutline(ctx context.Context, documentID string, limit int) ([]SimilarChunk, []string, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT d.document_id, d.title, d.edition, c.section, c.paragraph, c.appendix, c.content, d.scope
+		FROM chunks c
+		JOIN documents d ON d.document_id = c.document_id
+		WHERE c.document_id = $1
+		ORDER BY c.chunk_id`, documentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	opening := []SimilarChunk{}
+	sections := []string{}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var chunkRow SimilarChunk
+		if err := rows.Scan(&chunkRow.DocumentID, &chunkRow.Title, &chunkRow.Edition, &chunkRow.Section, &chunkRow.Paragraph, &chunkRow.Appendix, &chunkRow.Content, &chunkRow.Scope); err != nil {
+			return nil, nil, err
+		}
+		if len(opening) < limit {
+			opening = append(opening, chunkRow)
+		}
+		section := strings.TrimSpace(chunkRow.Section)
+		if section != "" && !seen[section] {
+			seen[section] = true
+			sections = append(sections, section)
+		}
+	}
+	return opening, sections, rows.Err()
 }

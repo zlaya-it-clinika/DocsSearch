@@ -34,6 +34,8 @@ type planResult struct {
 	Blank  *blank.Step
 	// Список документов на выбор или отмена выбора
 	Reply *assistantReply
+	// Ответы на поля документа пачкой - для записи реплики в историю
+	Answered []answerLine
 }
 
 // Режим из сообщения, иначе сохраненный в сессии. false - неизвестный режим в сообщении
@@ -87,17 +89,27 @@ func apply_ModeHint(reply assistantReply, mode, text string) assistantReply {
 	return reply
 }
 
-// Ход «Плана». loadOrganization вызывается, только когда готовится макет
-func advance_PlanTurn(session *sessionRecord, text string, loadOrganization func() (layout.Organization, error), format layout.Format, chatter layout.Chatter, now time.Time) (planResult, error) {
+// Ход «Плана». answers - ответы на поля начатого документа пачкой (карточка вопросов),
+// без них реплика отвечает на текущий вопрос. loadOrganization вызывается, только когда готовится макет
+func advance_PlanTurn(session *sessionRecord, text string, answers []fieldAnswer, loadOrganization func() (layout.Organization, error), format layout.Format, chatter layout.Chatter, now time.Time) (planResult, error) {
 	defer refresh_TemplateStep(session)
 	if session.blankFill.BlankID != "" {
-		if layout.Check_IsCancel(text) {
+		if len(answers) == 0 && layout.Check_IsCancel(text) {
 			session.blankFill = blank.FillState{}
 			return cancelled_PlanResult(), nil
 		}
-		if step, handled := blank.Advance_Blank(session.blankFill, text); handled {
+		blankID := session.blankFill.BlankID
+		var step blank.Step
+		var handled bool
+		if len(answers) > 0 {
+			step, handled = blank.Answer_Fields(session.blankFill, blank_Answers(answers))
+		} else {
+			step, handled = blank.Advance_Blank(session.blankFill, text)
+		}
+		if handled {
 			session.blankFill = step.State
-			return planResult{Blank: &step}, nil
+			answered := answer_Lines(answers, func(field string) string { return blank.Field_Label(blankID, field) })
+			return planResult{Blank: &step, Answered: answered}, nil
 		}
 		session.blankFill = blank.FillState{}
 	}
@@ -106,9 +118,16 @@ func advance_PlanTurn(session *sessionRecord, text string, loadOrganization func
 		if err != nil {
 			return planResult{}, err
 		}
-		step := layout.Advance_Layout(session.layoutFill, text, organization, format, chatter, now)
+		layoutID := session.layoutFill.LayoutID
+		var step layout.Step
+		if len(answers) > 0 {
+			step = layout.Answer_Fields(session.layoutFill, layout_Answers(answers), organization, format, chatter, now)
+		} else {
+			step = layout.Advance_Layout(session.layoutFill, text, organization, format, chatter, now)
+		}
 		session.layoutFill = step.State
-		return planResult{Layout: &step}, nil
+		answered := answer_Lines(answers, func(field string) string { return layout.Field_Label(layoutID, field) })
+		return planResult{Layout: &step, Answered: answered}, nil
 	}
 	documents := list_PlanDocuments()
 	request := text
@@ -169,13 +188,18 @@ func match_PlanDocument(documents []planDocument, text string) (planDocument, bo
 	return planDocument{}, false
 }
 
-// Ответ на список: номер («3», «3.») или название
+// Ответ на список: номер («3», «3.»), название целиком (кнопка варианта) или слова названия
 func pick_PlanDocument(documents []planDocument, text string) (planDocument, bool) {
 	if number, err := strconv.Atoi(strings.Trim(text, " .)")); err == nil {
 		if number >= 1 && number <= len(documents) {
 			return documents[number-1], true
 		}
 		return planDocument{}, false
+	}
+	for _, document := range documents {
+		if strings.EqualFold(strings.TrimSpace(text), document.Name) {
+			return document, true
+		}
 	}
 	return match_PlanDocument(documents, text)
 }
@@ -244,10 +268,15 @@ func start_PlanDocument(session *sessionRecord, document planDocument, request s
 	return planResult{Blank: &step}, nil
 }
 
+// Текст со списком - для клиентов без карточки вопросов, options - готовые ответы кнопками
 func build_PlanChoiceReply(documents []planDocument, lead string) assistantReply {
 	lines := []string{lead}
+	options := make([]string, 0, len(documents))
 	for index, document := range documents {
 		lines = append(lines, fmt.Sprintf("%d. %s", index+1, document.Name))
+		options = append(options, document.Name)
 	}
-	return build_PlainReply(texts.KindTemplateChoice, strings.Join(lines, "\n"))
+	reply := build_PlainReply(texts.KindTemplateChoice, strings.Join(lines, "\n"))
+	reply.Options = options
+	return reply
 }

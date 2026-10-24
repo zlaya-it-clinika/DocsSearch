@@ -45,10 +45,13 @@ const (
 	ScopePersonal = "personal"
 	ScopeAll      = "all"
 
-	ProcessDocuments      = "documents"
-	ProcessTitleDocuments = "Документооборот"
-	ProcessDefaultColor   = "gray"
-	SeedProcessColor      = "blue"
+	ProcessDocuments = "documents"
+	// Несколько процессов в чате: коды и названия через разделитель
+	ProcessSelectionSeparator = ","
+	ProcessTitleSeparator     = ", "
+	ProcessTitleDocuments     = "Документооборот"
+	ProcessDefaultColor       = "gray"
+	SeedProcessColor          = "blue"
 	// Сколько названий документов процесса попадает в подсказку модели
 	ProcessMapLimit = 40
 
@@ -81,12 +84,15 @@ const (
 	ErrorSourceLicense       = "source_license_denied"
 	ErrorSourceUnavailable   = "source_unavailable"
 	ErrorSourceSyncRunning   = "source_sync_running"
+	ErrorStandardDocument    = "standard_document"
 
 	DefaultLdapLabel = "LDAP"
 
 	LiveDatabaseMissing = "Для API_MODE=live нужен DATABASE_URL."
 	LiveDatabaseConnect = "Не удалось подключиться к PostgreSQL."
 	LiveEmbedDimensions = "OLLAMA_EMBED_DIMENSIONS должен быть положительным числом."
+	// Стандартный набор документов: каталог из STANDARD_DOCS_DIR не читается
+	LiveStandardDocsMissing = "Не найден каталог стандартного набора документов STANDARD_DOCS_DIR"
 
 	DocsWrongPassword  = "Неверный пароль."
 	DocsPasswordNotSet = "В .env не задан DOCS_PASSWORD."
@@ -124,7 +130,9 @@ const (
 	DocsHintCreateProcess   = "Новый процесс. Нужен флаг users.manage. Пустые промпты копируются из документооборота."
 	DocsHintImport          = "Каталог на машине API, один уровень. Поля path, process, edition, accessLevel, scope. Чужие расширения попадают в skipped."
 	DocsHintFile            = "Файл оригинала. Чужой личный документ для сотрудника выглядит как отсутствующий."
-	DocsHintDeleteDocument  = "Удаляет документ и фрагменты. Общий удаляет администратор, личный - владелец или администратор. Ответ 204."
+	DocsHintDeleteDocument  = "Удаляет документ и фрагменты. Общий удаляет администратор, личный - владелец или администратор. Ответ 204. Документ стандартного набора не удаляется: 409 standard_document."
+	DocsHintEditions        = "Архив прежних редакций: новая редакция с другим содержимым переносит прежнюю сюда. Новые первыми, у каждой fileLink."
+	DocsHintEditionFile     = "Файл архивной редакции. Права те же, что у документа."
 	DocsHintBlankFile       = "Исходный модульный бланк. id берется из template.fileLink, например order-work-group."
 	DocsHintDraftFile       = "Заполненный .docx бланка. Скачивает только владелец. id берется из template.draftLink."
 	DocsHintUsers           = "Список учетных записей. Нужен флаг users.manage."

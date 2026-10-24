@@ -409,6 +409,22 @@
 			<pre class="result"></pre>
 		</form>
 
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/documents/{documentId}/editions</h2>
+			<p class="hint">{{.HintEditions}}</p>
+			<input name="path" value="/documents/doc-1/editions" data-document-template="/documents/{id}/editions">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
+		<form class="call" data-method="GET">
+			<h2><span class="method get">GET</span>/documents/{documentId}/editions/{editionId}/file</h2>
+			<p class="hint">{{.HintEditionFile}}</p>
+			<input name="path" value="/documents/doc-1/editions/1/file">
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
+
 		<form class="call" data-method="DELETE">
 			<h2><span class="method delete">DELETE</span>/documents/{documentId}</h2>
 			<p class="hint">{{.HintDeleteDocument}}</p>

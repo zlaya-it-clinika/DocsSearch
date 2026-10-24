@@ -68,7 +68,7 @@ func reply_FromLayout(step layout.Step) assistantReply {
 		return reply
 	}
 	reply := build_PlainReply(texts.KindTemplateField, step.Question)
-	reply.Template = &templateState{ID: step.LayoutID, Title: step.Name, Field: step.Field, FieldLabel: step.FieldLabel}
+	reply.Template = &templateState{ID: step.LayoutID, Title: step.Name, Field: step.Field, FieldLabel: step.FieldLabel, Questions: questions_FromLayout(step.Questions)}
 	return reply
 }
 
