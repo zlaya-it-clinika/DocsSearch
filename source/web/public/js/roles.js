@@ -58,3 +58,52 @@ export function get_DocumentAudience(accessLevel, config) {
 export function get_DocumentAudienceLabel(accessLevel, config) {
 	return get_DocumentAudience(accessLevel, config) === Roles.admin ? RoleTexts.documentForAdmins : RoleTexts.documentForAll;
 }
+
+// Флаги ядра. Если массива permissions нет, это старое ядро: права считаются по роли.
+export const Permissions = Object.freeze({
+	chatUse: 'chat.use',
+	personalUpload: 'documents.personal.upload',
+	globalManage: 'documents.global.manage',
+	personalViewAll: 'documents.personal.view_all',
+	draftsCheck: 'drafts.check',
+	draftsAssist: 'drafts.assist',
+	templatesUse: 'templates.use',
+	usersManage: 'users.manage',
+	rolesManage: 'roles.manage',
+	auditView: 'audit.view',
+});
+
+const employeePermissions = new Set([
+	Permissions.chatUse,
+	Permissions.personalUpload,
+	Permissions.draftsCheck,
+	Permissions.templatesUse,
+]);
+
+export function has_PermissionList(user) {
+	return Array.isArray(user?.permissions);
+}
+
+export function has_Permission(user, config, permission) {
+	if (has_PermissionList(user)) {
+		return user.permissions.includes(permission);
+	}
+	// Новые флаги на старом ядре не показываем: методов под них там нет
+	if (permission === Permissions.rolesManage || permission === Permissions.draftsAssist) {
+		return false;
+	}
+	if (check_IsAdmin(user, config)) {
+		return true;
+	}
+	return employeePermissions.has(permission);
+}
+
+export function can_OpenAdmin(user, config) {
+	return [
+		Permissions.usersManage,
+		Permissions.rolesManage,
+		Permissions.auditView,
+		Permissions.globalManage,
+		Permissions.personalViewAll,
+	].some((permission) => has_Permission(user, config, permission));
+}

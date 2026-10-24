@@ -15,6 +15,7 @@ const columnTitles = {
 	edition: DocumentsTexts.columnEdition,
 	access: DocumentsTexts.columnAccess,
 	uploaded: DocumentsTexts.columnUploaded,
+	process: DocumentsTexts.columnProcess,
 };
 
 export function create_ScopeBadge(document, config) {
@@ -27,7 +28,7 @@ export function create_ScopeBadge(document, config) {
 	});
 }
 
-function render_Cell(column, document, config) {
+function render_Cell(column, document, config, processTitles) {
 	switch (column) {
 		case 'title':
 			return create_Element('td', { className: 'table-cell-wrap' }, [
@@ -45,6 +46,8 @@ function render_Cell(column, document, config) {
 			return create_Element('td', {}, [create_ScopeBadge(document, config)]);
 		case 'uploaded':
 			return create_Element('td', { className: 'time-cell', text: format_DateTime(document.uploadedAt) || AppTexts.notSpecified });
+		case 'process':
+			return create_Element('td', { className: 'table-cell-muted', text: processTitles[document.processId] || document.processId || AppTexts.notSpecified });
 		default:
 			return create_Element('td');
 	}
@@ -69,8 +72,20 @@ async function confirm_AndDelete(document, onChanged) {
 	}
 }
 
+export function create_ProcessFilter(processes, onChange) {
+	if (!Array.isArray(processes) || processes.length === 0) {
+		return null;
+	}
+	const select = create_Element('select', { className: 'select', attrs: { 'aria-label': DocumentsTexts.processFilter } }, [
+		create_Element('option', { text: DocumentsTexts.processAll, attrs: { value: '' } }),
+		...processes.map((process) => create_Element('option', { text: process.title, attrs: { value: process.processId } })),
+	]);
+	select.addEventListener('change', () => onChange(select.value));
+	return select;
+}
+
 // onNewEdition(document) - загрузить новую редакцию, onChanged() - перечитать список после удаления
-export function create_DocumentTable(documents, { config, columns, onNewEdition, onChanged }) {
+export function create_DocumentTable(documents, { config, columns, processTitles = {}, onNewEdition, onChanged }) {
 	return create_Element('div', { className: 'table-wrap' }, [
 		create_Element('table', { className: 'table' }, [
 			create_Element('thead', {}, [create_Element('tr', {}, [
@@ -78,7 +93,7 @@ export function create_DocumentTable(documents, { config, columns, onNewEdition,
 				create_Element('th', { className: 'table-cell-actions' }),
 			])]),
 			create_Element('tbody', {}, documents.map((document) => create_Element('tr', {}, [
-				...columns.map((column) => render_Cell(column, document, config)),
+				...columns.map((column) => render_Cell(column, document, config, processTitles)),
 				create_Element('td', { className: 'table-cell-actions' }, [
 					onNewEdition
 						? create_IconButton('upload', `${DocumentsTexts.newEdition}: ${document.title}`, () => onNewEdition(document))

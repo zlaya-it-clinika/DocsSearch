@@ -204,6 +204,14 @@ test('запрос с чужого origin отклоняется', async () => {
 	assert.equal((await response.json()).error, 'origin_denied');
 });
 
+test('процессы, роли, бланки и флаги уходят в ядро', async () => {
+	const { cookie } = await login_AsTestUser();
+	for (const path of ['/processes', '/roles', '/permissions', '/blanks/order/file']) {
+		await fetch(`${webUrl}/api${path}`, { headers: { cookie } });
+		assert.equal(coreRequests.at(-1).url, path);
+	}
+});
+
 test('без сессии прокси отвечает 401, вход ядра через прокси недоступен', async () => {
 	const anonymous = await fetch(`${webUrl}/api/me`);
 	assert.equal(anonymous.status, 401);
@@ -232,7 +240,8 @@ test('регистрация создаёт сессию веба и не отд
 	assert.equal(payload.user.role, 'admin');
 	assert.equal(payload.user.token, undefined);
 	assert.match(response.headers.get('set-cookie'), /HttpOnly/);
-	assert.deepEqual(JSON.parse(coreRequests.at(-1).body), { email: 'boss@corp.local', password: 'secret', displayName: 'Главный' });
+	const signupRequest = coreRequests.findLast((request) => request.url === '/auth/signup' && request.method === 'POST');
+	assert.deepEqual(JSON.parse(signupRequest.body), { email: 'boss@corp.local', password: 'secret', displayName: 'Главный' });
 
 	const invalid = await fetch(`${webUrl}/api/auth/signup`, {
 		method: 'POST',
@@ -258,7 +267,7 @@ test('вход через LDAP создаёт сессию, роль pending д�
 	assert.equal(response.status, 200);
 	const payload = await response.json();
 	assert.equal(payload.user.role, 'pending');
-	assert.equal(coreRequests.at(-1).url, '/auth/ldap');
+	assert.equal(coreRequests.findLast((request) => request.method === 'POST').url, '/auth/ldap');
 	const cookie = response.headers.get('set-cookie').split(';')[0];
 	const session = await fetch(`${webUrl}/api/auth/session`, { headers: { cookie } });
 	assert.equal(session.status, 200);

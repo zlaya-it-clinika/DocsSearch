@@ -488,19 +488,8 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
 			return
 		}
-		lines, listError := api.store.List_VisibleDocuments(request.Context(), token, "", "")
-		if listError != nil {
-			write_LiveError(responseWriter, listError)
-			return
-		}
-		var prepareError error
-		reply, prepareError = reply_ForPreparation(instruction_Source(lines))
-		if prepareError != nil {
-			write_DraftError(responseWriter, prepareError)
-			return
-		}
-		documents = shown_FromCitations(reply.Citations)
-		reply = reply_WithContacts(reply, nil)
+		reply = reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil)
+		documents = []shownDocument{}
 		if embedding, embedError := api.store.Embed_Question(body.Text); embedError == nil {
 			contactChunk, found, contactError := api.store.Find_ContactChunk(request.Context(), embedding, account.UserID, account.RoleIDs, processID)
 			if contactError != nil {

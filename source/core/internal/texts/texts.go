@@ -97,7 +97,7 @@ const (
 	DocsHintRenameSession   = "Новый заголовок. Пустой текст отвечает 400. Длинный обрезается до 60 символов. Чужая сессия - 403."
 	DocsHintDeleteSession   = "Удаляет сессию, сообщения и вложения черновика. Ответ 204. Чужая сессия - 403."
 	DocsHintHistory         = "История сессии."
-	DocsHintMessage         = "Ответ, уточнение, отказ, бланк или правка черновика. Необязательный processId ограничивает поиск одним процессом. Необязательный attachmentIds выбирает вложения этой сессии: ответ draft_revision. Без идентификаторов правка продолжается с последней версии. «как подготовить документ» перечисляет пункты 8.1 и 8.2. Запрос с названием модуля начинает бланк. В ответе и отказе есть contacts, в draft_revision его нет."
+	DocsHintMessage         = "Ответ, уточнение, отказ, бланк или правка черновика. Необязательный processId ограничивает поиск одним процессом. Необязательный attachmentIds выбирает вложения этой сессии: в live ответ draft_revision, в заглушке fallback и файл не переписывается. Без идентификаторов правка в live продолжается с последней версии. «как подготовить документ» дает fallback без цитат и без модели. Запрос с названием модуля начинает бланк. В ответе и отказе есть contacts, в draft_revision его нет."
 	DocsHintAttach          = "Вложение черновика .txt, .pdf или .docx. Нужен флаг drafts.assist. Ответ: attachmentId, fileName, characters. В поиск не попадает."
 	DocsHintListDocuments   = "Документы, которые пользователь может видеть. Параметр scope: global, personal или all. all только у администратора. Параметр process сужает список."
 	DocsHintUpload          = "Файл .txt, .pdf или .docx. Пустой scope: у флага documents.global.manage область global, иначе personal. roleIds ограничивает общий документ ролями. Пустой roleIds и accessLevel 1 - всем, accessLevel 2 - администратору и главному администратору. Пустой process - документооборот."
@@ -221,8 +221,6 @@ const (
 
 	StatusAccepted = "accepted"
 
-	AnswerRelevancePercent = 86
-
 	SeedAdminLogin       = "admin"
 	SeedAdminPassword    = "admin"
 	SeedAdminID          = "user-admin"
@@ -251,18 +249,12 @@ const (
 	PlainTextContentType = "text/plain; charset=utf-8"
 	DocxContentType      = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-	AnswerText      = "Входящий документ регистрируют в день поступления и присваивают ему номер."
-	AnswerQuote     = "Точная цитата из пункта инструкции."
-	AnswerSection   = "3"
-	AnswerParagraph = "3.2"
-
 	ClarifyText      = "Уточните, о каком типе документа идет речь."
 	FallbackText     = "В базе знаний нет сведений для ответа на этот вопрос."
 	AccessDeniedText = "Недостаточно прав для просмотра документов по этому запросу."
 
 	TemplateReadyText = "Черновик собран."
 
-	PrepareAnswerText           = "Чтобы подготовить документ:\n1. Проверьте состав реквизитов (пункт 8.1).\n2. Оформите реквизиты, которые положены этому виду документа (пункт 8.2)."
 	PrepareParagraphComposition = "8.1"
 	PrepareParagraphList        = "8.2"
 
@@ -279,8 +271,7 @@ const (
 	LiveDraftPrompt    = "Перепиши переданную часть черновика по просьбе сотрудника. Опирайся только на переданные фрагменты инструкции и не добавляй фактов, которых в них нет. Если фрагментов нет, правь формулировку, но не выдумывай пункты. Верни только JSON {\"draftText\":\"новый текст части\",\"changes\":[{\"text\":\"что изменено\",\"paragraph\":\"номер пункта\"}]}. paragraph указывай только если пункт есть во фрагментах. changes может быть пустым массивом."
 	LiveDraftPartLabel = "Часть черновика"
 
-	DraftRevisionKept     = "Черновик обновлен."
-	DraftRevisionStubNote = "Текст приведен к формулировке пункта 3.2."
+	DraftRevisionKept = "Черновик обновлен."
 
 	DraftRecommendation   = "В проекте нет отметки о приложении."
 	DraftSignatureMissing = "В проекте нет подписи."

@@ -35,11 +35,8 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 
 	sessionID := createSession(t, handler, employeeToken)
 	answer := postMessage(t, handler, employeeToken, sessionID, "Как зарегистрировать входящий документ?")
-	if answer.Kind != texts.KindAnswer || answer.RelevancePercent != texts.AnswerRelevancePercent || len(answer.Citations) != 1 {
+	if answer.Kind != texts.KindFallback || answer.Text != texts.FallbackText || answer.RelevancePercent != 0 || len(answer.Citations) != 0 {
 		t.Fatalf("answer %+v", answer)
-	}
-	if answer.Citations[0].OriginalLink != "/documents/doc-1/file#p3.2" || answer.Citations[0].DocumentID != texts.SeedInstructionID || answer.Citations[0].Scope != texts.ScopeGlobal {
-		t.Fatalf("link %+v", answer.Citations[0])
 	}
 	if answer.Contacts == nil || len(*answer.Contacts) != 0 {
 		t.Fatalf("contacts %+v", answer.Contacts)
@@ -74,7 +71,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 
 	templateSession := createSession(t, handler, employeeToken)
 	unknownTemplate := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
-	if unknownTemplate.Kind != texts.KindAnswer {
+	if unknownTemplate.Kind != texts.KindFallback || len(unknownTemplate.Citations) != 0 {
 		t.Fatalf("unknown template %+v", unknownTemplate)
 	}
 	field := postMessage(t, handler, employeeToken, templateSession, "Нужен модуль распоряжения о создании рабочей группы")
@@ -203,7 +200,7 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	if len(auditBody.Entries) == 0 || auditBody.Entries[0].Question != "Как зарегистрировать входящий документ?" {
 		t.Fatalf("audit %+v", auditBody.Entries)
 	}
-	if len(auditBody.Entries[0].Documents) != 1 || auditBody.Entries[0].Documents[0].DocumentID != texts.SeedInstructionID || auditBody.Entries[0].Documents[0].Scope != texts.ScopeGlobal {
+	if len(auditBody.Entries[0].Documents) != 0 {
 		t.Fatalf("audit documents %+v", auditBody.Entries[0].Documents)
 	}
 
@@ -527,14 +524,8 @@ func TestStubPrepareDocumentListsRequisites(t *testing.T) {
 	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
 	sessionID := createSession(t, handler, employeeToken)
 	answer := postMessage(t, handler, employeeToken, sessionID, "Как подготовить документ?")
-	if answer.Kind != texts.KindAnswer || answer.Text != texts.PrepareAnswerText || len(answer.Citations) != 2 {
+	if answer.Kind != texts.KindFallback || answer.Text != texts.FallbackText || len(answer.Citations) != 0 {
 		t.Fatalf("prepare %+v", answer)
-	}
-	if answer.Citations[0].Paragraph != texts.PrepareParagraphComposition || !strings.Contains(answer.Citations[0].OriginalLink, "#p8.1") || answer.Citations[0].DocumentID != texts.SeedInstructionID || strings.TrimSpace(answer.Citations[0].Quote) == "" {
-		t.Fatalf("composition %+v", answer.Citations[0])
-	}
-	if answer.Citations[1].Paragraph != texts.PrepareParagraphList || !strings.Contains(answer.Citations[1].OriginalLink, "#p8.2") {
-		t.Fatalf("list %+v", answer.Citations[1])
 	}
 	blank := postMessage(t, handler, employeeToken, sessionID, "Как подготовить модуль распоряжения о создании рабочей группы")
 	if blank.Kind != texts.KindTemplateField {
@@ -550,7 +541,7 @@ func TestStubContactsFollowQuestion(t *testing.T) {
 	sessionID := createSession(t, handler, employeeToken)
 
 	answer := postMessage(t, handler, employeeToken, sessionID, "Куда писать на wifi")
-	if answer.Kind != texts.KindAnswer || answer.Contacts == nil || len(*answer.Contacts) != 1 || (*answer.Contacts)[0].Department != "Управление информационных технологий" || (*answer.Contacts)[0].Channel != "почта wifi@bank" {
+	if answer.Kind != texts.KindFallback || len(answer.Citations) != 0 || answer.Contacts == nil || len(*answer.Contacts) != 1 || (*answer.Contacts)[0].Department != "Управление информационных технологий" || (*answer.Contacts)[0].Channel != "почта wifi@bank" {
 		t.Fatalf("answer contacts %+v", answer.Contacts)
 	}
 	fallback := postMessage(t, handler, employeeToken, sessionID, "Этого не найдено")
@@ -616,32 +607,17 @@ func TestStubDraftRevision(t *testing.T) {
 	response := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", employeeToken, map[string]any{
 		"text": "допиши раздел", "attachmentIds": []string{attachment.AttachmentID},
 	})
-	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"contacts"`) {
+	if response.Code != http.StatusOK {
 		t.Fatalf("revision %d %s", response.Code, response.Body.String())
 	}
 	reply := decodeJSON[assistantReply](t, response)
-	if reply.Kind != texts.KindDraftRevision || reply.Draft == nil || reply.Contacts != nil {
+	if reply.Kind != texts.KindFallback || reply.Text != texts.FallbackText || len(reply.Citations) != 0 || reply.Draft != nil || reply.Contacts == nil || len(*reply.Contacts) != 0 {
 		t.Fatalf("reply %+v", reply)
-	}
-	if reply.Draft.AttachmentID != attachment.AttachmentID || reply.Draft.Title != "draft.txt" || reply.Draft.DraftLink == "" {
-		t.Fatalf("draft %+v", reply.Draft)
-	}
-	if !strings.Contains(reply.Draft.DraftText, original) || !strings.Contains(reply.Draft.DraftText, texts.DraftRevisionStubNote) {
-		t.Fatalf("draft text %q", reply.Draft.DraftText)
-	}
-	if reply.Text != texts.DraftRevisionStubNote || len(reply.Citations) != 1 || reply.Citations[0].Paragraph != texts.AnswerParagraph || reply.Citations[0].DocumentID != texts.SeedInstructionID {
-		t.Fatalf("citations %+v %q", reply.Citations, reply.Text)
-	}
-	if len(reply.Draft.Changes) != 1 || reply.Draft.Changes[0].Text != texts.DraftRevisionStubNote || reply.Draft.Changes[0].Citation == nil || reply.Draft.Changes[0].Citation.Paragraph != texts.AnswerParagraph {
-		t.Fatalf("changes %+v", reply.Draft.Changes)
 	}
 
 	continued := postMessage(t, handler, employeeToken, sessionID, "сократи")
-	if continued.Kind != texts.KindDraftRevision || continued.Draft == nil || !strings.Contains(continued.Draft.DraftText, reply.Draft.DraftText) {
-		t.Fatalf("continued %+v", continued.Draft)
-	}
-	if strings.Count(continued.Draft.DraftText, texts.DraftRevisionStubNote) < 2 {
-		t.Fatalf("note count %q", continued.Draft.DraftText)
+	if continued.Kind != texts.KindFallback || continued.Draft != nil || len(continued.Citations) != 0 {
+		t.Fatalf("continued %+v", continued)
 	}
 
 	history := doJSON(t, handler, http.MethodGet, "/sessions/"+sessionID, employeeToken, nil)
@@ -654,14 +630,6 @@ func TestStubDraftRevision(t *testing.T) {
 	decodeInto(t, history, &stored)
 	if len(stored.Messages) < 1 || stored.Messages[0].Role != "user" || len(stored.Messages[0].Attachments) != 1 || stored.Messages[0].Attachments[0].AttachmentID != attachment.AttachmentID || stored.Messages[0].Attachments[0].FileName != "draft.txt" {
 		t.Fatalf("history %+v", stored.Messages)
-	}
-	file := doRaw(t, handler, http.MethodGet, reply.Draft.DraftLink, employeeToken, nil, "")
-	if file.Code != http.StatusOK {
-		t.Fatalf("docx %d", file.Code)
-	}
-	plain, err := chunk.Extract_DocumentText("draft.docx", file.Body.Bytes())
-	if err != nil || !strings.Contains(plain, original) || !strings.Contains(plain, texts.DraftRevisionStubNote) {
-		t.Fatalf("docx text %q %v", plain, err)
 	}
 }
 

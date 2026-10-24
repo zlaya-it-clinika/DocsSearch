@@ -3,7 +3,7 @@ import { fetch_AuthSession, fetch_PublicConfig, logout_User, on_AccountPending, 
 import { show_Toast } from './components/toast.js';
 import { create_Button, create_Element, create_Icon } from './lib/dom.js';
 import { apply_Theme, get_Theme } from './preferences.js';
-import { check_IsAdmin, check_IsPending } from './roles.js';
+import { check_IsPending } from './roles.js';
 import { define_NotFound, define_Route, navigate_To, start_Router } from './router.js';
 import { appState, update_State } from './state.js';
 import { AdminTexts, AppTexts, AuthTexts, PendingTexts, get_ErrorText } from './texts.js';
@@ -116,7 +116,7 @@ function show_Login() {
 }
 
 function show_Admin(tab) {
-	if (!check_IsAdmin(appState.user, appState.config)) {
+	if (!can_OpenAdmin(appState.user, appState.config)) {
 		show_Toast(AdminTexts.onlyAdmins, 'error');
 		navigate_To('/', { replace: true });
 		return;

@@ -166,31 +166,9 @@ func (session *sessionRecord) revision_Source(rawIDs []string) (revisionSource, 
 	}, true, nil
 }
 
-func (stubStore *stub) finish_StubRevision(session *sessionRecord, source revisionSource) (assistantReply, []messageAttachment, error) {
-	revised := source.text + "\n\n" + texts.DraftRevisionStubNote
-	item := seed_InstructionCitation()
-	changeCitation := item
-	reply := build_PlainReply(texts.KindDraftRevision, texts.DraftRevisionStubNote)
-	reply.Citations = []citation{item}
-	docxBody, err := draftassist.Build_Docx(revised)
-	if err != nil {
-		return assistantReply{}, nil, err
-	}
-	draftID := stubStore.save_DraftFile(session.ownerID, docx_FileName(source.title), docxBody)
-	reply.Draft = &draftState{
-		AttachmentID: source.attachmentID,
-		Title:        source.title,
-		DraftText:    revised,
-		Changes:      []draftChange{{Text: texts.DraftRevisionStubNote, Citation: &changeCitation}},
-		DraftLink:    draft_FileLink(draftID),
-	}
-	attachment := session.attachmentsByID[source.attachmentID]
-	if attachment != nil {
-		attachment.plainText = revised
-		attachment.characters = utf8.RuneCountInString(revised)
-	}
-	session.draftAttachmentID = source.attachmentID
-	return reply, source.files, nil
+// В заглушке нет модели, поэтому файл и сессия не меняются.
+func (*stub) finish_StubRevision(_ *sessionRecord, source revisionSource) (assistantReply, []messageAttachment, error) {
+	return build_PlainReply(texts.KindFallback, texts.FallbackText), source.files, nil
 }
 
 func build_DraftRevision(chatter interface {
@@ -304,19 +282,6 @@ func message_Attachments(files []livestore.AttachmentFile) []messageAttachment {
 		attachments = append(attachments, messageAttachment{AttachmentID: file.AttachmentID, FileName: file.FileName})
 	}
 	return attachments
-}
-
-func seed_InstructionCitation() citation {
-	return citation{
-		Document:     texts.SeedInstructionTitle,
-		Edition:      texts.EditionDefault,
-		Section:      texts.AnswerSection,
-		Paragraph:    texts.AnswerParagraph,
-		Quote:        texts.AnswerQuote,
-		OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.AnswerParagraph),
-		DocumentID:   texts.SeedInstructionID,
-		Scope:        texts.ScopeGlobal,
-	}
 }
 
 func docx_FileName(fileName string) string {

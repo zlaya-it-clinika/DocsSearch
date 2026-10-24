@@ -1,6 +1,7 @@
 // Поле ввода чата: растёт по мере набора, Enter отправляет, Shift+Enter переносит строку.
 // Кнопка «+» прикрепляет черновик на проверку.
 import { create_Element, create_Icon, create_IconButton } from '../lib/dom.js';
+import { create_MenuItem, open_Popover } from './popover.js';
 import { build_AcceptAttribute, validate_UploadFile } from '../lib/files.js';
 import { format_FileSize } from '../lib/format.js';
 import { ChatTexts, format_Text } from '../texts.js';
@@ -10,8 +11,9 @@ const maxInputHeight = 220;
 
 // onSubmit({ text, file }) должен вернуть Promise, поле блокируется до его завершения
 // config: настройки веб-сервера, из них берутся допустимые форматы и размер файла
-export function create_Composer({ onSubmit, allowAttach = true, config }) {
+export function create_Composer({ onSubmit, allowCheck = true, allowAssist = false, config }) {
 	let attachedFile = null;
+	let attachMode = allowCheck ? 'check' : 'assist';
 	let busy = false;
 	let basePlaceholder = ChatTexts.placeholder;
 
@@ -25,8 +27,28 @@ export function create_Composer({ onSubmit, allowAttach = true, config }) {
 	const fileInput = create_Element('input', {
 		attrs: { type: 'file', accept: build_AcceptAttribute(config), hidden: true, tabindex: -1 },
 	});
-	const attachButton = create_IconButton('plus', ChatTexts.attach, () => fileInput.click());
-	attachButton.hidden = !allowAttach;
+	const open_Picker = (mode) => {
+		attachMode = mode;
+		fileInput.click();
+	};
+	const attachButton = create_IconButton('plus', ChatTexts.attach, () => {
+		if (allowCheck && allowAssist) {
+			open_Popover(attachButton, (close) => [
+				create_MenuItem(create_Icon('file-check'), ChatTexts.attachCheck, () => {
+					close();
+					open_Picker('check');
+				}),
+				create_MenuItem(create_Icon('file'), ChatTexts.attachAssist, () => {
+					close();
+					open_Picker('assist');
+				}),
+			]);
+			return;
+		}
+		open_Picker(allowCheck ? 'check' : 'assist');
+	});
+	attachButton.hidden = !allowCheck && !allowAssist;
+	attachButton.setAttribute('aria-haspopup', allowCheck && allowAssist ? 'menu' : 'false');
 
 	const sendButton = create_Element('button', {
 		className: 'composer-send',
@@ -66,7 +88,7 @@ export function create_Composer({ onSubmit, allowAttach = true, config }) {
 				create_Icon('file-check'),
 				create_Element('div', { className: 'attachment-chip-text' }, [
 					create_Element('span', { className: 'attachment-chip-name', text: attachedFile.name }),
-					create_Element('span', { className: 'attachment-chip-meta', text: `${ChatTexts.draftCheckRequest} · ${format_FileSize(attachedFile.size)}` }),
+					create_Element('span', { className: 'attachment-chip-meta', text: `${attachMode === 'assist' ? ChatTexts.draftAssistRequest : ChatTexts.draftCheckRequest} · ${format_FileSize(attachedFile.size)}` }),
 				]),
 				create_IconButton('close', ChatTexts.removeAttachment, () => {
 					attachedFile = null;
@@ -88,11 +110,12 @@ export function create_Composer({ onSubmit, allowAttach = true, config }) {
 			return;
 		}
 		const file = attachedFile;
+		const mode = attachMode;
 		textarea.value = '';
 		attachedFile = null;
 		render_Attachment();
 		resize_Input();
-		await onSubmit({ text, file });
+		await onSubmit({ text, file, attachMode: mode });
 		textarea.focus();
 	};
 
@@ -144,10 +167,11 @@ export function create_Composer({ onSubmit, allowAttach = true, config }) {
 			textarea.focus();
 		},
 
-		attach_File(file) {
-			if (!allowAttach) {
+		attach_File(file, mode = attachMode) {
+			if (!allowCheck && !allowAssist) {
 				return;
 			}
+			attachMode = mode === 'assist' && allowAssist ? 'assist' : 'check';
 			const problem = validate_UploadFile(file, config);
 			if (problem) {
 				show_Toast(problem, 'error');

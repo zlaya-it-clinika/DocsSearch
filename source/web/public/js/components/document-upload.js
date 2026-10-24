@@ -1,5 +1,5 @@
 // Окно загрузки документа: новый общий или личный документ, либо новая редакция существующего.
-import { upload_Document } from '../api.js';
+import { list_Processes, list_Roles, upload_Document } from '../api.js';
 import { Scopes } from '../documents.js';
 import { create_Button, create_Element, create_Icon } from '../lib/dom.js';
 import { build_AcceptAttribute, format_AllowedExtensions, validate_UploadFile } from '../lib/files.js';
@@ -25,10 +25,24 @@ function pick_Title(scope, isNewEdition) {
 }
 
 // scope: global или personal. document задан - загружаем новую редакцию с тем же названием
-export function open_DocumentUploadForm({ config, scope, document = null, onUploaded }) {
+export async function open_DocumentUploadForm({ config, scope, document = null, onUploaded }) {
 	let selectedFile = null;
 	const isNewEdition = Boolean(document);
 	const isGlobal = scope === Scopes.global;
+	let processes = [];
+	let roles = [];
+	try {
+		processes = (await list_Processes())?.processes ?? [];
+	} catch {
+		processes = [];
+	}
+	if (isGlobal) {
+		try {
+			roles = (await list_Roles())?.roles ?? [];
+		} catch {
+			roles = [];
+		}
+	}
 
 	const errorBox = create_Element('div', { className: 'form-error', attrs: { role: 'alert' } });
 	errorBox.hidden = true;
@@ -51,11 +65,43 @@ export function open_DocumentUploadForm({ config, scope, document = null, onUplo
 		create_Element('option', { text: RoleTexts.documentForAll, attrs: { value: Roles.user } }),
 		create_Element('option', { text: RoleTexts.documentForAdmins, attrs: { value: Roles.admin } }),
 	]);
+	const processSelect = create_Element('select', { className: 'select', attrs: { id: 'document-process' } }, [
+		create_Element('option', { text: DocumentsTexts.processAll, attrs: { value: '' } }),
+		...processes.map((process) => create_Element('option', {
+			text: process.title,
+			attrs: { value: process.processId, selected: document?.processId === process.processId },
+		})),
+	]);
+	const visibleToAllInput = create_Element('input', { attrs: { id: 'document-visible-all', type: 'checkbox' } });
+	const roleBoxes = roles.map((role) => {
+		const input = create_Element('input', {
+			attrs: { type: 'checkbox', value: role.roleId },
+		});
+		input.checked = isNewEdition && Array.isArray(document.roleIds) && document.roleIds.includes(role.roleId);
+		return { role, input };
+	});
+	const roleList = create_Element('div', { className: 'check-list' }, roleBoxes.map(({ role, input }) => create_Element('label', { className: 'check-row' }, [
+		input,
+		create_Element('span', {}, [
+			create_Element('span', { text: role.title }),
+			role.description ? create_Element('span', { className: 'field-hint', text: role.description }) : null,
+		]),
+	])));
 	if (isNewEdition) {
 		titleInput.value = document.title;
 		titleInput.readOnly = true;
 		audienceSelect.value = get_DocumentAudience(document.accessLevel, config);
+		visibleToAllInput.checked = document.visibleToAll !== false && roleBoxes.every(({ input }) => !input.checked);
+	} else {
+		visibleToAllInput.checked = true;
 	}
+	const sync_RoleBoxes = () => {
+		for (const { input } of roleBoxes) {
+			input.disabled = visibleToAllInput.checked;
+		}
+	};
+	visibleToAllInput.addEventListener('change', sync_RoleBoxes);
+	sync_RoleBoxes();
 
 	const select_File = (file) => {
 		if (!file) {
@@ -102,8 +148,20 @@ export function open_DocumentUploadForm({ config, scope, document = null, onUplo
 		]),
 		create_Field('document-title', DocumentsTexts.fieldTitle, titleInput, isNewEdition ? '' : DocumentsTexts.fieldTitleHint, true),
 		create_Field('document-edition', DocumentsTexts.fieldEdition, editionInput, DocumentsTexts.fieldEditionHint, !isGlobal),
-		// Уровень доступа есть только у общего документа: личный видят владелец и администраторы
-		isGlobal ? create_Field('document-audience', DocumentsTexts.fieldAccess, audienceSelect) : null,
+		processes.length > 0 ? create_Field('document-process', DocumentsTexts.fieldProcess, processSelect, '', true) : null,
+		// Список ролей заменяет «все / только администраторы», когда ядро отдаёт роли
+		isGlobal && roles.length > 0
+			? create_Element('div', { className: 'field field-wide' }, [
+				create_Element('span', { className: 'field-label', text: DocumentsTexts.fieldRoles }),
+				create_Element('label', { className: 'check-row' }, [
+					visibleToAllInput,
+					create_Element('span', { text: DocumentsTexts.visibleToAll }),
+				]),
+				roleList,
+				create_Element('span', { className: 'field-hint', text: DocumentsTexts.fieldRolesHint }),
+			])
+			: null,
+		isGlobal && roles.length === 0 ? create_Field('document-audience', DocumentsTexts.fieldAccess, audienceSelect) : null,
 		create_Element('p', {
 			className: 'field-hint field-wide',
 			text: isGlobal ? DocumentsTexts.globalUploadHint : DocumentsTexts.personalUploadHint,
@@ -127,14 +185,29 @@ export function open_DocumentUploadForm({ config, scope, document = null, onUplo
 			return;
 		}
 		errorBox.hidden = true;
+		const fields = {
+			title: titleInput.value,
+			edition: editionInput.value,
+			scope,
+			process: processSelect.value,
+		};
+		if (isGlobal && roles.length > 0) {
+			if (visibleToAllInput.checked) {
+				fields.accessLevel = config.userAccessLevel;
+			} else {
+				fields.roleIds = roleBoxes.filter(({ input }) => input.checked).map(({ role }) => role.roleId);
+				if (fields.roleIds.length === 0) {
+					errorBox.textContent = DocumentsTexts.rolesRequired;
+					errorBox.hidden = false;
+					return;
+				}
+			}
+		} else if (isGlobal) {
+			fields.accessLevel = get_AccessLevelForRole(audienceSelect.value, config);
+		}
 		submitButton.disabled = true;
 		try {
-			await upload_Document(selectedFile, {
-				title: titleInput.value,
-				edition: editionInput.value,
-				scope,
-				accessLevel: isGlobal ? get_AccessLevelForRole(audienceSelect.value, config) : undefined,
-			});
+			await upload_Document(selectedFile, fields);
 			modal.close();
 			show_Toast(DocumentsTexts.uploaded, 'success');
 			onUploaded();

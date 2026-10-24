@@ -1,11 +1,11 @@
 // Страница «Документы» для каждого сотрудника: свои личные документы и общие документы компании.
 // Всё это одна база знаний: чат ищет по общим документам и по личным документам автора вопроса.
-import { list_Documents } from '../api.js';
+import { list_Documents, list_Processes } from '../api.js';
 import { open_DocumentUploadForm } from '../components/document-upload.js';
-import { create_DocumentTable } from '../components/document-table.js';
+import { create_DocumentTable, create_ProcessFilter } from '../components/document-table.js';
 import { Scopes, check_IsPersonal, filter_ByQuery, read_DocumentList, read_DocumentPermissions } from '../documents.js';
 import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
-import { check_IsAdmin } from '../roles.js';
+import { Permissions, has_Permission } from '../roles.js';
 import { AppTexts, DocumentsTexts, get_ErrorText } from '../texts.js';
 
 function create_SectionHeader(title, countLabel, tools = []) {
@@ -17,6 +17,9 @@ function create_SectionHeader(title, countLabel, tools = []) {
 
 export function create_DocumentsPage({ user, config }) {
 	let documents = [];
+	let processes = [];
+	let processTitles = {};
+	let processFilter = '';
 	let permissions = read_DocumentPermissions(null, user, config);
 	let query = '';
 
@@ -32,7 +35,8 @@ export function create_DocumentsPage({ user, config }) {
 	uploadButton.hidden = true;
 
 	const render_Sections = () => {
-		const filtered = filter_ByQuery(documents, query);
+		const byProcess = processFilter ? documents.filter((document) => document.processId === processFilter) : documents;
+		const filtered = filter_ByQuery(byProcess, query);
 		const personal = filtered.filter(check_IsPersonal);
 		const global = filtered.filter((document) => !check_IsPersonal(document));
 		personalCount.textContent = String(documents.filter(check_IsPersonal).length);
@@ -55,7 +59,8 @@ export function create_DocumentsPage({ user, config }) {
 		} else {
 			personalContent.replaceChildren(create_DocumentTable(personal, {
 				config,
-				columns: ['title', 'edition', 'uploaded'],
+				processTitles,
+				columns: processes.length > 0 ? ['title', 'process', 'edition', 'uploaded'] : ['title', 'edition', 'uploaded'],
 				onNewEdition: permissions.canUploadPersonal
 					? (document) => open_DocumentUploadForm({ config, scope: Scopes.personal, document, onUploaded: reload })
 					: null,
@@ -69,7 +74,8 @@ export function create_DocumentsPage({ user, config }) {
 			// Общими документами управляют в админ-панели, здесь только просмотр
 			globalContent.replaceChildren(create_DocumentTable(global, {
 				config,
-				columns: ['title', 'edition', 'access'],
+				processTitles,
+				columns: processes.length > 0 ? ['title', 'process', 'edition', 'access'] : ['title', 'edition', 'access'],
 			}));
 		}
 	};
@@ -83,8 +89,25 @@ export function create_DocumentsPage({ user, config }) {
 		globalContent.replaceChildren();
 	};
 
+	const filterHost = create_Element('div', { className: 'section-tools' });
+
 	async function reload() {
 		try {
+			if (processes.length === 0) {
+				try {
+					processes = (await list_Processes())?.processes ?? [];
+					processTitles = Object.fromEntries(processes.map((process) => [process.processId, process.title]));
+					const filter = create_ProcessFilter(processes, (value) => {
+						processFilter = value;
+						render_Sections();
+					});
+					if (filter) {
+						filterHost.replaceChildren(filter);
+					}
+				} catch {
+					processes = [];
+				}
+			}
 			const payload = await list_Documents();
 			documents = read_DocumentList(payload);
 			permissions = read_DocumentPermissions(payload, user, config);
@@ -94,7 +117,7 @@ export function create_DocumentsPage({ user, config }) {
 		}
 	}
 
-	const globalLead = check_IsAdmin(user, config)
+	const globalLead = has_Permission(user, config, Permissions.globalManage)
 		? create_Element('p', { className: 'section-lead' }, [
 			DocumentsTexts.globalLeadAdmin,
 			' ',
@@ -108,10 +131,13 @@ export function create_DocumentsPage({ user, config }) {
 				create_Element('h1', { className: 'page-title', text: DocumentsTexts.pageTitle }),
 				create_Element('p', { className: 'section-lead', text: DocumentsTexts.pageLead }),
 			]),
-			create_SearchBox(DocumentsTexts.search, (value) => {
-				query = value;
-				render_Sections();
-			}),
+			create_Element('div', { className: 'section-header' }, [
+				create_SearchBox(DocumentsTexts.search, (value) => {
+					query = value;
+					render_Sections();
+				}),
+				filterHost,
+			]),
 			create_Element('section', { className: 'page-section' }, [
 				create_SectionHeader(DocumentsTexts.personalTitle, personalCount, [uploadButton]),
 				create_Element('p', { className: 'section-lead', text: DocumentsTexts.personalLead }),

@@ -659,7 +659,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	stored := reply
 	stored.Role = "assistant"
 	session.messages = append(session.messages, stored)
-	stubStore.append_AuditEntry(record, body.Text, reply.Kind)
+	stubStore.append_AuditEntry(record, body.Text)
 	write_JSONResponse(responseWriter, http.StatusOK, reply)
 }
 
@@ -1263,23 +1263,14 @@ func (stubStore *stub) find_UserByBearerToken(request *http.Request) (*userRecor
 	return record, true
 }
 
-func (stubStore *stub) append_AuditEntry(record *userRecord, question, kind string) {
-	documents := []shownDocument{}
-	if kind == texts.KindAnswer {
-		documents = []shownDocument{{
-			DocumentID: texts.SeedInstructionID,
-			Title:      texts.SeedInstructionTitle,
-			Paragraph:  texts.AnswerParagraph,
-			Scope:      texts.ScopeGlobal,
-		}}
-	}
+func (stubStore *stub) append_AuditEntry(record *userRecord, question string) {
 	stubStore.audit = append(stubStore.audit, auditEntry{
 		EntryID:     "audit-" + strconv.Itoa(stubStore.nextAudit),
 		UserID:      record.id,
 		DisplayName: record.displayName,
 		Question:    question,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-		Documents:   documents,
+		Documents:   []shownDocument{},
 	})
 	stubStore.nextAudit++
 }
@@ -1377,16 +1368,8 @@ func build_AssistantReply(session *sessionRecord, text string, allowBlank bool) 
 		return build_PlainReply(texts.KindFallback, texts.FallbackText), blank.Step{}, nil
 	case strings.Contains(lower, texts.PhraseClarify):
 		return build_PlainReply(texts.KindClarify, texts.ClarifyText), blank.Step{}, nil
-	case strings.Contains(lower, texts.PhrasePrepare):
-		reply, err := reply_ForPreparation(draftcheck.Source{
-			DocumentID: texts.SeedInstructionID,
-			Title:      texts.SeedInstructionTitle,
-			Edition:    texts.EditionDefault,
-			Scope:      texts.ScopeGlobal,
-		})
-		return reply, blank.Step{}, err
 	default:
-		return build_AnswerReply(), blank.Step{}, nil
+		return build_PlainReply(texts.KindFallback, texts.FallbackText), blank.Step{}, nil
 	}
 }
 
@@ -1498,25 +1481,6 @@ func build_PlainReply(kind, text string) assistantReply {
 		Text:             text,
 		RelevancePercent: 0,
 		Citations:        []citation{},
-	}
-}
-
-func build_AnswerReply() assistantReply {
-	return assistantReply{
-		Kind:             texts.KindAnswer,
-		Text:             texts.AnswerText,
-		RelevancePercent: texts.AnswerRelevancePercent,
-		Citations: []citation{{
-			Document:     texts.SeedInstructionTitle,
-			Edition:      texts.EditionDefault,
-			Section:      texts.AnswerSection,
-			Paragraph:    texts.AnswerParagraph,
-			Appendix:     "",
-			Quote:        texts.AnswerQuote,
-			OriginalLink: build_OriginalFileLink(texts.SeedInstructionID, texts.AnswerParagraph),
-			DocumentID:   texts.SeedInstructionID,
-			Scope:        texts.ScopeGlobal,
-		}},
 	}
 }
 

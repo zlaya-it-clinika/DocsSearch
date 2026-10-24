@@ -1,5 +1,5 @@
 // Вкладка «Пользователи», как в open-webui: список, поиск, добавление, смена имени, почты, пароля и роли.
-import { create_User, list_Users, update_User } from '../api.js';
+import { create_User, list_Roles, list_Users, update_User } from '../api.js';
 import { open_Modal } from '../components/modal.js';
 import { show_Toast } from '../components/toast.js';
 import { create_Button, create_Element, create_EmptyBlock, create_IconButton, create_LoadingBlock, create_SearchBox } from '../lib/dom.js';
@@ -31,7 +31,11 @@ function create_Field(id, label, control, hint = '') {
 
 // Общая форма для создания и правки. При правке пароль меняется, только если поле заполнено.
 // Свою роль администратор не меняет: ядро такой запрос отклонит
-function open_UserForm({ config, account, currentUserId, onSaved }) {
+function selected_RoleIds(boxes) {
+	return boxes.filter((input) => input.checked).map((input) => input.value);
+}
+
+function open_UserForm({ config, account, currentUserId, roles = [], onSaved }) {
 	const isEdit = Boolean(account);
 	const isSelf = isEdit && account.userId === currentUserId;
 	const errorBox = create_Element('div', { className: 'form-error', attrs: { role: 'alert' } });
@@ -43,6 +47,16 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 	const initialRole = isEdit ? get_UserRole(account, config) : Roles.user;
 	const roleSelect = create_RoleSelect(initialRole, 'user-role');
 	roleSelect.disabled = isSelf;
+	const assigned = new Set(account?.roleIds ?? []);
+	const roleBoxes = roles.map((role) => {
+		const input = create_Element('input', { attrs: { type: 'checkbox', value: role.roleId, disabled: isSelf } });
+		input.checked = assigned.size > 0 ? assigned.has(role.roleId) : role.roleId === 'role-user';
+		return input;
+	});
+	const roleChecks = create_Element('div', { className: 'check-list' }, roles.map((role, index) => create_Element('label', { className: 'check-row' }, [
+		roleBoxes[index],
+		create_Element('span', { text: role.title }),
+	])));
 	if (isEdit) {
 		nameInput.value = account.displayName;
 		loginInput.value = account.login;
@@ -54,7 +68,9 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 		isEdit
 			? create_Field('user-password', AdminTexts.usersFieldNewPassword, passwordInput, AdminTexts.usersFieldNewPasswordHint)
 			: create_Field('user-password', AdminTexts.usersFieldPassword, passwordInput),
-		create_Field('user-role', AdminTexts.usersFieldRole, roleSelect, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRoleHint),
+		roles.length > 0
+			? create_Field('user-roles', AdminTexts.usersFieldRoles, roleChecks, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRolesHint)
+			: create_Field('user-role', AdminTexts.usersFieldRole, roleSelect, isSelf ? AdminTexts.usersSelfRoleHint : AdminTexts.usersFieldRoleHint),
 		create_Element('div', { className: 'field-wide' }, [errorBox]),
 	]);
 	const submitButton = create_Button(AppTexts.save, { variant: 'primary', type: 'submit', attrs: { form: 'user-form' } });
@@ -82,7 +98,13 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 		if (passwordInput.value !== '') {
 			changes.password = passwordInput.value;
 		}
-		if (!isSelf && roleSelect.value !== initialRole) {
+		if (!isSelf && roles.length > 0) {
+			const nextIds = selected_RoleIds(roleBoxes);
+			const same = nextIds.length === assigned.size && nextIds.every((roleId) => assigned.has(roleId));
+			if (!same) {
+				changes.roleIds = nextIds;
+			}
+		} else if (!isSelf && roleSelect.value !== initialRole) {
 			changes.role = roleSelect.value;
 		}
 		return changes;
@@ -96,6 +118,11 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 			emptyField.focus();
 			return;
 		}
+		if (roles.length > 0 && !isSelf && selected_RoleIds(roleBoxes).length === 0) {
+			errorBox.textContent = AdminTexts.usersRolesRequired;
+			errorBox.hidden = false;
+			return;
+		}
 		errorBox.hidden = true;
 		const changes = isEdit ? build_Changes() : null;
 		if (isEdit && Object.keys(changes).length === 0) {
@@ -104,14 +131,17 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 		}
 		submitButton.disabled = true;
 		try {
-			const saved = isEdit
+			let saved = isEdit
 				? await update_User(account.userId, changes)
 				: await create_User({
 					login: loginInput.value.trim(),
 					password: passwordInput.value,
 					displayName: nameInput.value.trim(),
-					role: roleSelect.value,
+					role: roles.length > 0 ? Roles.user : roleSelect.value,
 				});
+			if (!isEdit && roles.length > 0) {
+				saved = await update_User(saved.userId, { roleIds: selected_RoleIds(roleBoxes) });
+			}
 			modal.close();
 			show_Toast(isEdit ? AdminTexts.usersUpdated : AdminTexts.usersCreated, 'success');
 			onSaved(saved);
@@ -127,6 +157,7 @@ function open_UserForm({ config, account, currentUserId, onSaved }) {
 
 export function create_UsersTab({ user, config }) {
 	let accounts = [];
+	let roles = [];
 	let query = '';
 
 	const countLabel = create_Element('span', { className: 'section-count' });
@@ -138,6 +169,13 @@ export function create_UsersTab({ user, config }) {
 		try {
 			const payload = await list_Users();
 			accounts = Array.isArray(payload?.users) ? payload.users : [];
+			if (roles.length === 0) {
+				try {
+					roles = (await list_Roles())?.roles ?? [];
+				} catch {
+					roles = [];
+				}
+			}
 			render_Table();
 		} catch (error) {
 			content.replaceChildren(create_EmptyBlock('alert', AdminTexts.usersLoadFailed, [
@@ -160,6 +198,11 @@ export function create_UsersTab({ user, config }) {
 	};
 
 	const render_RoleBadge = (account) => {
+		if (roles.length > 0) {
+			const titles = roles.filter((role) => (account.roleIds ?? []).includes(role.roleId)).map((role) => role.title);
+			const label = titles.length > 0 ? titles.join(', ') : get_RoleLabel(get_UserRole(account, config));
+			return create_Element('span', { className: 'badge', text: label });
+		}
 		const role = get_UserRole(account, config);
 		const isSelf = account.userId === user.userId;
 		// Себе роль не меняем, чтобы администратор случайно не потерял доступ к панели
@@ -211,6 +254,7 @@ export function create_UsersTab({ user, config }) {
 						create_IconButton('edit', `${AdminTexts.usersEdit}: ${account.displayName}`, () => open_UserForm({
 							config,
 							account,
+							roles,
 							currentUserId: user.userId,
 							onSaved: (saved) => {
 								Object.assign(account, saved);
@@ -237,6 +281,7 @@ export function create_UsersTab({ user, config }) {
 					onClick: () => open_UserForm({
 						config,
 						account: null,
+						roles,
 						currentUserId: user.userId,
 						onSaved: (saved) => {
 							accounts.push(saved);

@@ -4,8 +4,9 @@ import { navigate_To } from '../router.js';
 import { create_Element, create_Icon, create_IconButton, create_SearchBox } from '../lib/dom.js';
 import { get_DateGroupLabel, get_Initials } from '../lib/format.js';
 import { Themes, get_Theme, set_Theme } from '../preferences.js';
-import { check_IsAdmin, get_RoleLabel, get_UserRole } from '../roles.js';
+import { can_OpenAdmin, get_RoleLabel, get_UserRole } from '../roles.js';
 import { AppTexts, SidebarTexts, format_Text, get_ErrorText } from '../texts.js';
+import { get_FirstAdminTab } from '../views/admin.js';
 import { open_Confirm } from './confirm.js';
 import { create_MenuItem, open_Popover } from './popover.js';
 import { show_Toast } from './toast.js';
@@ -236,8 +237,8 @@ export function create_Sidebar({ user, config, history, onNavigate, onLogout, on
 			create_Element('div', { className: 'menu-label', text: SidebarTexts.themeLabel }),
 			create_ThemeSwitch(close),
 			create_Element('div', { className: 'menu-separator' }),
-			check_IsAdmin(currentUser, config)
-				? create_MenuItem(create_Icon('shield'), SidebarTexts.adminPanel, close, { href: '/admin/users', dataLink: true })
+			can_OpenAdmin(currentUser, config)
+				? create_MenuItem(create_Icon('shield'), SidebarTexts.adminPanel, close, { href: `/admin/${get_FirstAdminTab(currentUser, config)}`, dataLink: true })
 				: null,
 			create_Element('div', { className: 'menu-separator' }),
 			create_MenuItem(create_Icon('logout'), SidebarTexts.logout, () => {

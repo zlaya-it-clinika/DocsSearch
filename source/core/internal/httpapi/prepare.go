@@ -9,36 +9,6 @@ import (
 	"docssearch/core/internal/texts"
 )
 
-func reply_ForPreparation(source draftcheck.Source) (assistantReply, error) {
-	reply := build_PlainReply(texts.KindAnswer, texts.PrepareAnswerText)
-	reply.Citations = make([]citation, 0, 2)
-	for _, paragraph := range []string{texts.PrepareParagraphComposition, texts.PrepareParagraphList} {
-		piece, found, err := draftcheck.Find_Paragraph(paragraph)
-		if err != nil {
-			return assistantReply{}, err
-		}
-		if !found {
-			continue
-		}
-		link := ""
-		if source.DocumentID != "" {
-			link = build_OriginalFileLink(source.DocumentID, paragraph)
-		}
-		reply.Citations = append(reply.Citations, citation{
-			Document:     source.Title,
-			Edition:      source.Edition,
-			Section:      piece.Section,
-			Paragraph:    paragraph,
-			Appendix:     piece.Appendix,
-			Quote:        strings.TrimSpace(piece.Content),
-			OriginalLink: link,
-			DocumentID:   source.DocumentID,
-			Scope:        source.Scope,
-		})
-	}
-	return reply, nil
-}
-
 func instruction_Source(lines []livestore.DocumentLine) draftcheck.Source {
 	source := draftcheck.Source{
 		Title:   texts.SeedInstructionTitle,

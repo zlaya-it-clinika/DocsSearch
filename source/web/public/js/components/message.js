@@ -1,4 +1,5 @@
 // Отрисовка реплик чата. Вид ответа ассистента выбирается по полю kind из контракта ядра.
+import { build_LinkedFileUrl } from '../api.js';
 import { copy_ToClipboard, create_Element, create_Icon, create_IconButton, download_TextFile } from '../lib/dom.js';
 import { build_SafeFileName, format_FileSize } from '../lib/format.js';
 import { render_Markdown } from '../lib/markdown.js';
@@ -16,6 +17,7 @@ export const MessageKinds = Object.freeze({
 	// Локальные виды: проверка черновика не входит в историю сессии ядра
 	draftRequest: 'draft_request',
 	draftCheck: 'draft_check',
+	draftRevision: 'draft_revision',
 });
 
 const kindLabels = {
@@ -25,6 +27,7 @@ const kindLabels = {
 	[MessageKinds.templateField]: ChatTexts.kindTemplateField,
 	[MessageKinds.templateReady]: ChatTexts.kindTemplateReady,
 	[MessageKinds.draftCheck]: ChatTexts.kindDraftCheck,
+	[MessageKinds.draftRevision]: ChatTexts.kindDraftRevision,
 };
 
 async function copy_WithFeedback(text) {
@@ -51,6 +54,7 @@ function create_Callout(iconName, text, hint, variant = '') {
 }
 
 function create_DocCard(iconName, title, subtitle, bodyChildren, actions = []) {
+	const visibleActions = actions.filter(Boolean);
 	return create_Element('div', { className: 'doc-card' }, [
 		create_Element('div', { className: 'doc-card-header' }, [
 			create_Icon(iconName),
@@ -60,7 +64,36 @@ function create_DocCard(iconName, title, subtitle, bodyChildren, actions = []) {
 			]),
 		]),
 		create_Element('div', { className: 'doc-card-body' }, bodyChildren),
-		actions.length > 0 ? create_Element('div', { className: 'doc-card-actions' }, actions) : null,
+		visibleActions.length > 0 ? create_Element('div', { className: 'doc-card-actions' }, visibleActions) : null,
+	]);
+}
+
+function create_DownloadLink(link, label) {
+	const href = build_LinkedFileUrl(link);
+	if (!href) {
+		return null;
+	}
+	return create_Element('a', {
+		className: 'button button-outline',
+		attrs: { href, download: '' },
+	}, [create_Icon('download', 'icon-sm'), create_Element('span', { text: label })]);
+}
+
+function render_Contacts(contacts) {
+	if (!Array.isArray(contacts) || contacts.length === 0) {
+		return null;
+	}
+	return create_Element('div', { className: 'doc-card contact-card' }, [
+		create_Element('div', { className: 'doc-card-header' }, [
+			create_Icon('users'),
+			create_Element('div', { className: 'doc-card-title' }, [
+				create_Element('div', { text: ChatTexts.contactsTitle }),
+			]),
+		]),
+		create_Element('div', { className: 'doc-card-body' }, contacts.map((contact) => create_Element('div', { className: 'contact-row' }, [
+			create_Element('strong', { text: contact.department || AppTexts.notSpecified }),
+			contact.channel ? create_Element('div', { className: 'callout-hint', text: contact.channel }) : null,
+		]))),
 	]);
 }
 
@@ -72,6 +105,10 @@ function render_AnswerBody(message) {
 	}
 	if (citations.length > 0) {
 		children.push(render_Sources(citations, message.relevancePercent));
+	}
+	const contacts = render_Contacts(message.contacts);
+	if (contacts) {
+		children.push(contacts);
 	}
 	return children;
 }
@@ -86,6 +123,8 @@ function render_TemplateFieldBody(message) {
 				create_Element('strong', { text: template.fieldLabel ?? template.field ?? AppTexts.notSpecified }),
 			]),
 			create_Element('div', { className: 'callout-hint', text: ChatTexts.templateProgressHint }),
+		], [
+			create_DownloadLink(template.fileLink, ChatTexts.downloadBlank),
 		]),
 	];
 }
@@ -109,6 +148,8 @@ function render_TemplateReadyBody(message) {
 				attrs: { type: 'button' },
 				on: { click: () => download_TextFile(fileName, draftText) },
 			}, [create_Icon('download', 'icon-sm'), create_Element('span', { text: ChatTexts.draftDownload })]),
+			create_DownloadLink(template.fileLink, ChatTexts.downloadBlank),
+			create_DownloadLink(template.draftLink, ChatTexts.downloadDocx),
 		]),
 	];
 }
@@ -129,14 +170,46 @@ function render_DraftCheckBody(message) {
 	];
 }
 
-function render_AssistantBody(message) {
+function render_DraftRevisionBody(message, handlers) {
+	const draft = message.draft ?? {};
+	const changes = Array.isArray(draft.changes) ? draft.changes : [];
+	const changeList = changes.length === 0
+		? null
+		: create_Element('ol', { className: 'recommendations' }, changes.map((change, index) => create_Element('li', { className: 'recommendation' }, [
+			create_Element('div', { text: change.text }),
+			change.citation
+				? create_Element('div', { className: 'chip-list' }, [create_CitationChip(change.citation, index, 0)])
+				: null,
+		])));
+	return [
+		render_Markdown(message.text),
+		create_DocCard('file-check', draft.title || ChatTexts.kindDraftRevision, ChatTexts.draftChanges, [
+			changeList,
+			create_Element('pre', { className: 'draft-text', text: draft.draftText ?? '' }),
+		], [
+			create_Element('button', {
+				className: 'button button-outline',
+				attrs: { type: 'button' },
+				on: { click: () => copy_WithFeedback(draft.draftText ?? '') },
+			}, [create_Icon('copy', 'icon-sm'), create_Element('span', { text: ChatTexts.draftCopy })]),
+			create_DownloadLink(draft.draftLink, ChatTexts.downloadDocx),
+			create_Element('button', {
+				className: 'button button-outline',
+				attrs: { type: 'button' },
+				on: { click: () => handlers.onDraftContinue?.() },
+			}, [create_Icon('edit', 'icon-sm'), create_Element('span', { text: ChatTexts.draftContinue })]),
+		]),
+	];
+}
+
+function render_AssistantBody(message, handlers) {
 	switch (message.kind) {
 		case MessageKinds.answer:
 			return render_AnswerBody(message);
 		case MessageKinds.clarify:
 			return [create_Callout('help', message.text, ChatTexts.clarifyHint)];
 		case MessageKinds.fallback:
-			return [create_Callout('info', message.text, ChatTexts.fallbackHint)];
+			return [create_Callout('info', message.text, ChatTexts.fallbackHint), render_Contacts(message.contacts)];
 		case MessageKinds.accessDenied:
 			return [create_Callout('lock', message.text, ChatTexts.accessDeniedHint, 'callout-warning')];
 		case MessageKinds.templateField:
@@ -145,6 +218,8 @@ function render_AssistantBody(message) {
 			return render_TemplateReadyBody(message);
 		case MessageKinds.draftCheck:
 			return render_DraftCheckBody(message);
+		case MessageKinds.draftRevision:
+			return render_DraftRevisionBody(message, handlers);
 		default:
 			// Новый вид ответа из ядра: показываем текст и источники, если они есть
 			return render_AnswerBody(message);
@@ -154,6 +229,9 @@ function render_AssistantBody(message) {
 function build_AssistantCopyText(message) {
 	if (message.kind === MessageKinds.templateReady && message.template?.draftText) {
 		return message.template.draftText;
+	}
+	if (message.kind === MessageKinds.draftRevision && message.draft?.draftText) {
+		return message.draft.draftText;
 	}
 	if (message.kind === MessageKinds.draftCheck) {
 		return (message.recommendations ?? []).map((item, index) => `${index + 1}. ${item.text}`).join('\n');
@@ -170,11 +248,11 @@ function create_AssistantHeader(kind) {
 	]);
 }
 
-function render_AssistantMessage(message) {
+function render_AssistantMessage(message, handlers) {
 	const header = create_AssistantHeader(message.kind);
 	return create_Element('div', { className: 'message message-assistant', dataset: { kind: message.kind ?? '' } }, [
 		header,
-		create_Element('div', { className: 'message-body' }, render_AssistantBody(message)),
+		create_Element('div', { className: 'message-body' }, render_AssistantBody(message, handlers)),
 		create_Element('div', { className: 'message-actions' }, [create_CopyButton(build_AssistantCopyText(message))]),
 	]);
 }
@@ -188,6 +266,12 @@ function render_UserMessage(message, handlers) {
 			Number.isFinite(message.fileSize)
 				? create_Element('span', { className: 'attachment-chip-meta', text: format_FileSize(message.fileSize) })
 				: null,
+		]));
+	}
+	for (const attachment of Array.isArray(message.attachments) ? message.attachments : []) {
+		children.push(create_Element('div', { className: 'message-attachment' }, [
+			create_Icon('file'),
+			create_Element('span', { text: `${ChatTexts.draftAssistRequest}: ${attachment.fileName}` }),
 		]));
 	}
 	if (message.text) {
@@ -224,7 +308,7 @@ export function render_Message(message, handlers = {}) {
 	if (message.role === 'user') {
 		return render_UserMessage(message, handlers);
 	}
-	return render_AssistantMessage(message);
+	return render_AssistantMessage(message, handlers);
 }
 
 export function render_PendingMessage() {

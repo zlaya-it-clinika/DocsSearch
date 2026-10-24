@@ -7,7 +7,7 @@ import { ErrorCodes } from './texts.js';
 
 // Разделы ядра, которые можно вызывать из браузера. Вход ядра (/auth/login) и страница /docs
 // сюда не входят: токен ядра не должен попасть в браузер.
-const proxiedCoreSections = new Set(['me', 'sessions', 'documents', 'users', 'audit', 'drafts', 'templates']);
+const proxiedCoreSections = new Set(['me', 'sessions', 'documents', 'users', 'audit', 'drafts', 'templates', 'blanks', 'processes', 'roles', 'permissions']);
 
 // Настройки входа администратора (/auth/admin/...) идут в ядро с токеном сессии
 const adminAuthPrefix = '/auth/admin/';
@@ -101,7 +101,13 @@ async function create_CoreSession(context, { corePath, body, countFailure }) {
 	if (previousSessionId) {
 		sessionStore.destroy_Session(previousSessionId);
 	}
-	const session = sessionStore.create_Session(coreReply.payload.token, pick_PublicUser(coreReply.payload));
+	// В ответе входа нет permissions. Профиль /me нужен, чтобы разделы открывались по флагам сразу.
+	let user = pick_PublicUser(coreReply.payload);
+	const profile = await call_CoreJson(config, 'GET', '/me', { token: coreReply.payload.token });
+	if (profile.status === 200 && profile.payload) {
+		user = { ...user, ...pick_PublicUser(profile.payload) };
+	}
+	const session = sessionStore.create_Session(coreReply.payload.token, user);
 	response.setHeader('Set-Cookie', build_SessionCookie(config, session.id, config.sessionTtlMs / 1000));
 	send_Json(response, 200, { user: session.user, csrfToken: session.csrfToken });
 }

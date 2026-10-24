@@ -158,8 +158,21 @@ export function fetch_ChatSession(sessionId) {
 	return request_Api('GET', `/sessions/${encode_Segment(sessionId)}`);
 }
 
-export function send_ChatMessage(sessionId, text) {
-	return request_Api('POST', `/sessions/${encode_Segment(sessionId)}/messages`, { json: { text } });
+export function send_ChatMessage(sessionId, text, extra = {}) {
+	const json = { text };
+	if (extra.processId) {
+		json.processId = extra.processId;
+	}
+	if (Array.isArray(extra.attachmentIds) && extra.attachmentIds.length > 0) {
+		json.attachmentIds = extra.attachmentIds;
+	}
+	return request_Api('POST', `/sessions/${encode_Segment(sessionId)}/messages`, { json });
+}
+
+export function upload_SessionAttachment(sessionId, file) {
+	const formData = new FormData();
+	formData.append('file', file);
+	return request_Api('POST', `/sessions/${encode_Segment(sessionId)}/attachments`, { formData });
 }
 
 // Документы
@@ -179,6 +192,14 @@ export function upload_Document(file, fields = {}) {
 	const formData = new FormData();
 	formData.append('file', file);
 	for (const [name, value] of Object.entries(fields)) {
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (String(item).trim() !== '') {
+					formData.append(name, String(item).trim());
+				}
+			}
+			continue;
+		}
 		if (value !== undefined && value !== null && String(value).trim() !== '') {
 			formData.append(name, String(value).trim());
 		}
@@ -192,10 +213,46 @@ export function build_DocumentFileUrl(documentId) {
 
 // originalLink из цитаты: /documents/<id>/file#p3.2. Пускаем только пути к документам
 export function build_OriginalUrl(originalLink) {
-	if (typeof originalLink !== 'string' || !originalLink.startsWith('/documents/')) {
+	return build_LinkedFileUrl(originalLink, '/documents/');
+}
+
+// Ссылки ядра на файл: оригинал, бланк и docx черновика
+export function build_LinkedFileUrl(link, prefix = '') {
+	if (typeof link !== 'string') {
 		return null;
 	}
-	return apiPrefix + originalLink;
+	const allowed = prefix
+		? link.startsWith(prefix)
+		: link.startsWith('/documents/') || link.startsWith('/blanks/') || link.startsWith('/drafts/');
+	return allowed ? apiPrefix + link : null;
+}
+
+export function list_Processes() {
+	return request_Api('GET', '/processes');
+}
+
+export function create_Process(fields) {
+	return request_Api('POST', '/processes', { json: fields });
+}
+
+export function list_Roles() {
+	return request_Api('GET', '/roles');
+}
+
+export function list_Permissions() {
+	return request_Api('GET', '/permissions');
+}
+
+export function create_Role(fields) {
+	return request_Api('POST', '/roles', { json: fields });
+}
+
+export function update_Role(roleId, fields) {
+	return request_Api('PATCH', `/roles/${encode_Segment(roleId)}`, { json: fields });
+}
+
+export function delete_Role(roleId) {
+	return request_Api('DELETE', `/roles/${encode_Segment(roleId)}`);
 }
 
 export function check_Draft(file) {

@@ -1,10 +1,11 @@
 // Экран чата: история сессии, отправка вопросов, проверка черновика.
 // Один и тот же экран работает на полной странице и в виджете (compact).
-import { check_Draft, create_ChatSession, fetch_ChatSession, send_ChatMessage } from '../api.js';
+import { check_Draft, create_ChatSession, fetch_ChatSession, list_Processes, send_ChatMessage, upload_SessionAttachment } from '../api.js';
 import { create_Composer } from '../components/composer.js';
 import { MessageKinds, render_Message, render_PendingMessage } from '../components/message.js';
 import { create_Button, create_Element, create_EmptyBlock, create_Icon, create_LoadingBlock } from '../lib/dom.js';
 import { build_ChatTitle } from '../lib/format.js';
+import { Permissions, has_Permission } from '../roles.js';
 import { AppTexts, ChatTexts, get_ErrorText } from '../texts.js';
 
 function render_Greeting(user) {
@@ -28,6 +29,11 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 	let loading = Boolean(sessionId);
 	let destroyed = false;
 	let dragDepth = 0;
+	let processId = '';
+
+	const allowCheck = has_Permission(user, config, Permissions.draftsCheck);
+	const allowAssist = has_Permission(user, config, Permissions.draftsAssist);
+	const canChat = has_Permission(user, config, Permissions.chatUse);
 
 	const messagesList = create_Element('div', { className: 'chat-messages', attrs: { role: 'log', 'aria-live': 'polite' } });
 	const greeting = render_Greeting(user);
@@ -36,11 +42,21 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 
 	const composer = create_Composer({
 		onSubmit: (payload) => handle_Submit(payload),
-		allowAttach: true,
+		allowCheck,
+		allowAssist,
 		config,
 	});
+	const processSelect = create_Element('select', {
+		className: 'select process-select',
+		attrs: { 'aria-label': ChatTexts.processLabel },
+	});
+	processSelect.hidden = true;
+	const quickActions = create_Element('div', { className: 'quick-actions' });
+	quickActions.hidden = true;
 	const footer = create_Element('div', { className: 'chat-footer' }, [
-		composer.element,
+		processSelect,
+		quickActions,
+		canChat ? composer.element : create_Element('div', { className: 'callout-hint', text: ChatTexts.chatDenied }),
 		create_Element('div', { className: 'chat-disclaimer', text: ChatTexts.disclaimer }),
 	]);
 	const dropOverlay = create_Element('div', { className: 'drop-overlay' }, [
@@ -54,7 +70,12 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 
 	const handlers = {
 		onRepeat: (text) => send_Text(text),
+		onDraftContinue: () => composer.focus(),
 		onRetry: (message) => {
+			if (message.retryFile && message.attachMode === 'assist') {
+				run_DraftAssist(message.retryFile, message.text, message);
+				return;
+			}
 			if (message.kind === MessageKinds.draftRequest && message.retryFile) {
 				run_DraftCheck(message.retryFile, message);
 				return;
@@ -62,6 +83,33 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			send_Text(message.text, message);
 		},
 	};
+
+	const quickPrompts = [
+		[ChatTexts.quickExpand, ChatTexts.quickExpandText],
+		[ChatTexts.quickShorten, ChatTexts.quickShortenText],
+		[ChatTexts.quickFormat, ChatTexts.quickFormatText],
+	];
+	for (const [label, text] of quickPrompts) {
+		quickActions.append(create_Button(label, {
+			variant: 'outline',
+			onClick: () => composer.set_Text(text),
+		}));
+	}
+
+	processSelect.addEventListener('change', () => {
+		processId = processSelect.value;
+	});
+	list_Processes().then((payload) => {
+		const processes = Array.isArray(payload?.processes) ? payload.processes : [];
+		if (destroyed || processes.length === 0) {
+			return;
+		}
+		processSelect.append(
+			create_Element('option', { text: ChatTexts.processAll, attrs: { value: '' } }),
+			...processes.map((process) => create_Element('option', { text: process.title, attrs: { value: process.processId } })),
+		);
+		processSelect.hidden = false;
+	}).catch(() => {});
 
 	function scroll_ToBottom() {
 		requestAnimationFrame(() => {
@@ -96,6 +144,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			...(pending ? [render_PendingMessage()] : []),
 		);
 		update_FieldPrompt();
+		quickActions.hidden = !messages.some((message) => message.kind === MessageKinds.draftRevision);
 	}
 
 	function render_LoadError(error) {
@@ -161,7 +210,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		scroll_ToBottom();
 		try {
 			const activeSessionId = await ensure_Session(text);
-			const reply = await send_ChatMessage(activeSessionId, text);
+			const reply = await send_ChatMessage(activeSessionId, text, { processId });
 			messages.push({ ...reply, role: 'assistant' });
 			history?.remember_Chat(activeSessionId, build_ChatTitle(find_FirstQuestion()));
 		} catch (error) {
@@ -211,8 +260,51 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		}
 	}
 
-	// Сначала проверка файла, затем комментарий уходит обычным вопросом
-	async function handle_Submit({ text, file }) {
+	async function run_DraftAssist(file, text, existingMessage = null) {
+		const question = text.trim() || ChatTexts.draftAssistDefault;
+		const requestMessage = existingMessage ?? {
+			role: 'user',
+			text: question,
+			attachMode: 'assist',
+			retryFile: file,
+			attachments: [{ fileName: file.name }],
+		};
+		if (existingMessage) {
+			existingMessage.failed = false;
+		} else {
+			messages.push(requestMessage);
+		}
+		pending = true;
+		composer.set_Busy(true);
+		render_View();
+		scroll_ToBottom();
+		try {
+			const activeSessionId = await ensure_Session(question);
+			const uploaded = await upload_SessionAttachment(activeSessionId, file);
+			requestMessage.attachments = [{ attachmentId: uploaded.attachmentId, fileName: uploaded.fileName }];
+			const reply = await send_ChatMessage(activeSessionId, question, {
+				processId,
+				attachmentIds: [uploaded.attachmentId],
+			});
+			messages.push({ ...reply, role: 'assistant' });
+			history?.remember_Chat(activeSessionId, build_ChatTitle(find_FirstQuestion()));
+		} catch (error) {
+			requestMessage.failed = true;
+			requestMessage.errorText = get_ErrorText(error);
+		} finally {
+			pending = false;
+			composer.set_Busy(false);
+			render_View();
+			scroll_ToBottom();
+		}
+	}
+
+	// Проверка файла идёт отдельно. Помощь с черновиком отправляет файл и текст одним шагом.
+	async function handle_Submit({ text, file, attachMode }) {
+		if (file && attachMode === 'assist') {
+			await run_DraftAssist(file, text);
+			return;
+		}
 		if (file) {
 			await run_DraftCheck(file);
 		}
