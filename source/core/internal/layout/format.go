@@ -82,6 +82,14 @@ type Format struct {
 	FirstSignatureSpaceMM   float64 `json:"firstSignatureSpaceMM"`
 	SignatureGapMM          float64 `json:"signatureGapMM"`
 	ExecutorSpaceMM         float64 `json:"executorSpaceMM"`
+	// Откуда взято каждое правило: ключ правила - профиль и пункт. Нужно проверке оформления
+	Refs map[string]FormatRef `json:"-"`
+}
+
+// Источник правила: название профиля («Инструкция по ДОУ Организации») и пункт с пояснением
+type FormatRef struct {
+	Profile string
+	Text    string
 }
 
 type formatRule struct {
@@ -108,6 +116,7 @@ func Load_Format(order []string) (Format, error) {
 		return Format{}, err
 	}
 	merged := map[string]json.RawMessage{}
+	refs := map[string]FormatRef{}
 	for _, profile := range ordered {
 		for key, rule := range profile.Rules {
 			if strings.TrimSpace(rule.Ref) == "" {
@@ -115,6 +124,7 @@ func Load_Format(order []string) (Format, error) {
 			}
 			if _, taken := merged[key]; !taken {
 				merged[key] = rule.Value
+				refs[key] = FormatRef{Profile: profile.Title, Text: rule.Ref}
 			}
 		}
 	}
@@ -131,6 +141,7 @@ func Load_Format(order []string) (Format, error) {
 	if err := decoder.Decode(&format); err != nil {
 		return Format{}, fmt.Errorf("layout format: %w", err)
 	}
+	format.Refs = refs
 	return format, format.validate()
 }
 
@@ -191,6 +202,9 @@ func find_MissingRules(merged map[string]json.RawMessage) []string {
 	formatType := reflect.TypeOf(Format{})
 	for index := 0; index < formatType.NumField(); index++ {
 		key := strings.Split(formatType.Field(index).Tag.Get("json"), ",")[0]
+		if key == "-" {
+			continue
+		}
 		if _, found := merged[key]; !found {
 			missing = append(missing, key)
 		}

@@ -1,6 +1,8 @@
 // Экран чата: история сессии, отправка вопросов, проверка черновика.
 // Один и тот же экран работает на полной странице и в виджете (compact).
-import { check_Draft, create_ChatSession, fetch_ChatSession, send_ChatMessage, upload_SessionAttachment } from '../api.js';
+import { check_Draft, create_ChatSession, fetch_ChatSession, fix_DraftFormat, send_ChatMessage, upload_SessionAttachment } from '../api.js';
+import { open_Confirm } from '../components/confirm.js';
+import { show_Toast } from '../components/toast.js';
 import { create_ModeSwitch } from '../components/mode-switch.js';
 import { create_ProcessPicker } from '../components/process-picker.js';
 import { create_Composer } from '../components/composer.js';
@@ -95,6 +97,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		onRepeat: (text) => send_Text(text),
 		onRevealProgress: () => follow_Bottom(),
 		onDraftContinue: () => composer.focus(),
+		onFixFormat: (message) => run_FormatFix(message),
 		onRetry: (message) => {
 			if (message.retryFile && message.attachMode === 'assist') {
 				run_DraftAssist(message.retryFile, message.text, message);
@@ -418,11 +421,56 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 				kind: MessageKinds.draftCheck,
 				fileName: file.name,
 				recommendations: Array.isArray(payload?.recommendations) ? payload.recommendations : [],
+				// false - файл не .docx, оформление не проверялось
+				formatChecked: payload?.formatChecked !== false,
+				// Файл остается только в этом окне: по нему исправляется оформление
+				sourceFile: file,
 				reveal: true,
 			});
 		} catch (error) {
 			requestMessage.failed = true;
 			requestMessage.errorText = get_ErrorText(error);
+		} finally {
+			pending = false;
+			composer.set_Busy(false);
+			render_View();
+			scroll_ToBottom();
+		}
+	}
+
+	// Исправление оформления только после подтверждения сотрудника. Исправленный файл - новая карточка со ссылкой
+	async function run_FormatFix(checkMessage) {
+		const file = checkMessage?.sourceFile;
+		if (!file || pending) {
+			return;
+		}
+		const confirmed = await open_Confirm({
+			title: ChatTexts.formatFixConfirmTitle,
+			text: ChatTexts.formatFixConfirmText,
+			confirmLabel: ChatTexts.formatFixConfirm,
+		});
+		if (!confirmed) {
+			return;
+		}
+		checkMessage.fixRequested = true;
+		pending = true;
+		composer.set_Busy(true);
+		render_View();
+		scroll_ToBottom();
+		try {
+			const payload = await fix_DraftFormat(file);
+			messages.push({
+				role: 'assistant',
+				kind: MessageKinds.draftFix,
+				fileName: payload?.fileName ?? file.name,
+				draftLink: payload?.draftLink,
+				applied: Array.isArray(payload?.applied) ? payload.applied : [],
+				recommendations: Array.isArray(payload?.recommendations) ? payload.recommendations : [],
+				reveal: true,
+			});
+		} catch (error) {
+			checkMessage.fixRequested = false;
+			show_Toast(get_ErrorText(error), 'error');
 		} finally {
 			pending = false;
 			composer.set_Busy(false);

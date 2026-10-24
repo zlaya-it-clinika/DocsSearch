@@ -286,6 +286,14 @@ export function check_Draft(file) {
 	return request_Api('POST', '/drafts/check', { formData });
 }
 
+// Исправление оформления .docx после подтверждения сотрудника: draftLink на исправленный файл,
+// applied - что исправлено, recommendations - что осталось поправить вручную
+export function fix_DraftFormat(file) {
+	const formData = new FormData();
+	formData.append('file', file);
+	return request_Api('POST', '/drafts/fix', { formData });
+}
+
 // Пользователи и журнал (уровень администратора)
 
 export function list_Users() {

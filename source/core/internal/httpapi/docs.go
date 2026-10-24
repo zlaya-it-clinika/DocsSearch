@@ -63,6 +63,7 @@ type docsConsoleView struct {
 	HintFile                 string
 	HintDeleteDocument       string
 	HintEditions             string
+	HintDraftFix             string
 	HintEditionFile          string
 	HintBlankFile            string
 	HintDraftFile            string
@@ -242,6 +243,7 @@ func consoleView() docsConsoleView {
 		HintFile:                 texts.DocsHintFile,
 		HintDeleteDocument:       texts.DocsHintDeleteDocument,
 		HintEditions:             texts.DocsHintEditions,
+		HintDraftFix:             texts.DocsHintDraftFix,
 		HintEditionFile:          texts.DocsHintEditionFile,
 		HintBlankFile:            texts.DocsHintBlankFile,
 		HintDraftFile:            texts.DocsHintDraftFile,

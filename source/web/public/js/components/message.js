@@ -21,6 +21,8 @@ export const MessageKinds = Object.freeze({
 	// Локальные виды: проверка черновика не входит в историю сессии ядра
 	draftRequest: 'draft_request',
 	draftCheck: 'draft_check',
+	// Исправленное по подтверждению оформление: тоже только в этом окне
+	draftFix: 'draft_fix',
 	draftRevision: 'draft_revision',
 });
 
@@ -32,6 +34,7 @@ const kindLabels = {
 	[MessageKinds.templateReady]: ChatTexts.kindTemplateReady,
 	[MessageKinds.templateChoice]: ChatTexts.kindTemplateChoice,
 	[MessageKinds.draftCheck]: ChatTexts.kindDraftCheck,
+	[MessageKinds.draftFix]: ChatTexts.kindDraftFix,
 	[MessageKinds.draftRevision]: ChatTexts.kindDraftRevision,
 };
 
@@ -177,18 +180,62 @@ function render_TemplateReadyBody(message) {
 	];
 }
 
-function render_DraftCheckBody(message) {
+// Итог исправления: что исправлено, скачать файл, что осталось вручную
+function render_DraftFixBody(message) {
+	const applied = Array.isArray(message.applied) ? message.applied : [];
 	const recommendations = Array.isArray(message.recommendations) ? message.recommendations : [];
-	const list = recommendations.length === 0
-		? create_Element('div', { className: 'callout-hint', text: ChatTexts.draftCheckEmpty })
+	return [
+		create_DocCard('file-check', ChatTexts.formatFixTitle, message.fileName, [
+			applied.length === 0
+				? create_Element('div', { className: 'callout-hint', text: ChatTexts.formatFixNothing })
+				: create_Element('ul', { className: 'fix-list' }, applied.map((item) => create_Element('li', {}, [create_Icon('check', 'icon-sm'), create_Element('span', { text: item })]))),
+			recommendations.length > 0 ? create_Element('div', { className: 'fix-remaining-title', text: ChatTexts.formatFixRemaining }) : null,
+			recommendations.length > 0 ? render_RecommendationList(recommendations, '') : null,
+		], [create_DownloadLink(message.draftLink, ChatTexts.downloadDocx)]),
+		create_Element('div', { className: 'local-note', text: ChatTexts.formatFixNote }),
+	];
+}
+
+// Уровень замечания по оформлению: нарушение правила или повод проверить. У рекомендаций по тексту уровня нет
+function render_CheckLevel(level) {
+	if (level === 'error') {
+		return create_Element('span', { className: 'badge check-level check-level-error', text: ChatTexts.draftCheckLevelError });
+	}
+	if (level === 'remark') {
+		return create_Element('span', { className: 'badge check-level check-level-remark', text: ChatTexts.draftCheckLevelRemark });
+	}
+	return null;
+}
+
+function render_RecommendationList(recommendations, emptyText) {
+	return recommendations.length === 0
+		? create_Element('div', { className: 'callout-hint', text: emptyText })
 		: create_Element('ol', { className: 'recommendations' }, recommendations.map((recommendation, index) => create_Element('li', { className: 'recommendation' }, [
-			create_Element('div', { text: recommendation.text }),
+			create_Element('div', { className: 'recommendation-text' }, [
+				render_CheckLevel(recommendation.level),
+				create_Element('span', { text: recommendation.text }),
+			]),
 			recommendation.citation
 				? create_Element('div', { className: 'chip-list' }, [create_CitationChip(recommendation.citation, index, 0)])
 				: null,
 		])));
+}
+
+function render_DraftCheckBody(message, handlers) {
+	const recommendations = Array.isArray(message.recommendations) ? message.recommendations : [];
+	// Кнопка - когда есть замечания по оформлению и файл еще в этом окне
+	const canFix = message.formatChecked !== false && message.sourceFile && handlers.onFixFormat && recommendations.some((item) => item.level);
 	return [
-		create_DocCard('file-check', ChatTexts.draftCheckTitle, message.fileName, [list]),
+		create_DocCard('file-check', ChatTexts.draftCheckTitle, message.fileName, [
+			render_RecommendationList(recommendations, ChatTexts.draftCheckEmpty),
+			message.formatChecked === false ? create_Element('div', { className: 'callout-hint', text: ChatTexts.draftCheckFormatSkipped }) : null,
+		], canFix ? [
+			create_Element('button', {
+				className: 'button button-primary',
+				attrs: { type: 'button', disabled: Boolean(message.fixRequested) },
+				on: { click: () => handlers.onFixFormat(message) },
+			}, [create_Icon('edit', 'icon-sm'), create_Element('span', { text: ChatTexts.formatFixButton })]),
+		] : []),
 		create_Element('div', { className: 'local-note', text: ChatTexts.draftCheckLocalNote }),
 	];
 }
@@ -242,7 +289,9 @@ function render_AssistantBody(message, handlers) {
 		case MessageKinds.templateChoice:
 			return [create_Callout('file', message.text, ChatTexts.templateChoiceHint)];
 		case MessageKinds.draftCheck:
-			return render_DraftCheckBody(message);
+			return render_DraftCheckBody(message, handlers);
+		case MessageKinds.draftFix:
+			return render_DraftFixBody(message);
 		case MessageKinds.draftRevision:
 			return render_DraftRevisionBody(message, handlers);
 		default:
@@ -260,6 +309,9 @@ function build_AssistantCopyText(message) {
 	}
 	if (message.kind === MessageKinds.draftCheck) {
 		return (message.recommendations ?? []).map((item, index) => `${index + 1}. ${item.text}`).join('\n');
+	}
+	if (message.kind === MessageKinds.draftFix) {
+		return [...(message.applied ?? []), ...(message.recommendations ?? []).map((item) => item.text)].join('\n');
 	}
 	return message.text ?? '';
 }

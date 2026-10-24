@@ -634,6 +634,17 @@
 			<button type="submit">{{.Send}}</button>
 			<pre class="result"></pre>
 		</form>
+
+		<form class="call" data-method="POST" data-upload="file">
+			<h2><span class="method post">POST</span>/drafts/fix</h2>
+			<p class="hint">{{.HintDraftFix}}</p>
+			<input name="path" value="/drafts/fix">
+			<div class="fields">
+				<input type="file" name="file">
+			</div>
+			<button type="submit">{{.Send}}</button>
+			<pre class="result"></pre>
+		</form>
 	</main>
 	<script>
 		const tokenInput = document.querySelector("#api-token")

@@ -77,6 +77,7 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("GET /audit", api.serve_Audit)
 	routeMux.HandleFunc("GET /audit/permissions", api.serve_PermissionAudit)
 	routeMux.HandleFunc("POST /drafts/check", api.serve_DraftCheck)
+	routeMux.HandleFunc("POST /drafts/fix", api.serve_DraftFix)
 	return routeMux
 }
 
@@ -1181,14 +1182,12 @@ func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request
 		write_LiveError(responseWriter, err)
 		return
 	}
-	recommendations, err := recommendations_ForDraft(fileName, body, instruction_Source(lines))
+	recommendations, err := recommendations_ForDraft(fileName, body, instruction_Source(lines), api.layoutFormat)
 	if err != nil {
 		write_DraftError(responseWriter, err)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Recommendations []draftRecommendation `json:"recommendations"`
-	}{Recommendations: recommendations})
+	write_JSONResponse(responseWriter, http.StatusOK, recommendations)
 }
 
 func read_BearerToken(request *http.Request) (string, bool) {

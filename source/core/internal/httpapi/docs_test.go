@@ -52,6 +52,7 @@ func TestDocsRequiresPasswordFromConfig(t *testing.T) {
 		"/blanks/order-work-group/file",
 		"/drafts/draft-1/file",
 		"/drafts/check",
+		"/drafts/fix",
 		"/sessions/session-1/attachments",
 		`name="scope"`,
 		"/processes",

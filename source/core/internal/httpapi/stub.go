@@ -563,6 +563,7 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("GET /audit", stubStore.serve_Audit)
 	routeMux.HandleFunc("GET /audit/permissions", stubStore.serve_PermissionAudit)
 	routeMux.HandleFunc("POST /drafts/check", stubStore.serve_DraftCheck)
+	routeMux.HandleFunc("POST /drafts/fix", stubStore.serve_DraftFix)
 	return routeMux
 }
 
@@ -1479,26 +1480,25 @@ func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, requ
 		Title:      texts.SeedInstructionTitle,
 		Edition:    texts.EditionDefault,
 		Scope:      texts.ScopeGlobal,
-	})
+	}, stubStore.layoutFormat)
 	if err != nil {
 		write_DraftError(responseWriter, err)
 		return
 	}
-	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		Recommendations []draftRecommendation `json:"recommendations"`
-	}{Recommendations: recommendations})
+	write_JSONResponse(responseWriter, http.StatusOK, recommendations)
 }
 
-func recommendations_ForDraft(fileName string, body []byte, source draftcheck.Source) ([]draftRecommendation, error) {
+func recommendations_ForDraft(fileName string, body []byte, source draftcheck.Source, format layout.Format) (draftCheckResponse, error) {
 	plain, err := chunk.Extract_DocumentText(fileName, body)
 	if err != nil {
-		return nil, err
+		return draftCheckResponse{}, err
 	}
 	items, err := draftcheck.Check_Draft(plain, source)
 	if err != nil {
-		return nil, err
+		return draftCheckResponse{}, err
 	}
-	recommendations := make([]draftRecommendation, 0, len(items))
+	// Сначала оформление файла по правилам Инструкции и ГОСТ, затем рекомендации по тексту
+	recommendations, formatChecked := format_Recommendations(fileName, body, source, format)
 	for _, item := range items {
 		link := ""
 		if item.DocumentID != "" && item.Paragraph != "" {
@@ -1519,7 +1519,7 @@ func recommendations_ForDraft(fileName string, body []byte, source draftcheck.So
 			},
 		})
 	}
-	return recommendations, nil
+	return draftCheckResponse{Recommendations: recommendations, FormatChecked: formatChecked}, nil
 }
 
 func write_DraftError(responseWriter http.ResponseWriter, err error) {
@@ -1533,6 +1533,8 @@ func write_DraftError(responseWriter http.ResponseWriter, err error) {
 type draftRecommendation struct {
 	Text     string   `json:"text"`
 	Citation citation `json:"citation"`
+	// Замечание по оформлению: error - нарушено правило, remark - стоит проверить. Пусто - рекомендация по тексту
+	Level string `json:"level,omitempty"`
 }
 
 func (stubStore *stub) find_OwnedSession(responseWriter http.ResponseWriter, request *http.Request) (*sessionRecord, bool) {
