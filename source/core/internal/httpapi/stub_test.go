@@ -344,8 +344,9 @@ func TestDocumentScopeListUploadAndDelete(t *testing.T) {
 	if !adminList.CanUploadGlobal || !adminList.CanUploadPersonal || len(adminList.Documents) != 2 {
 		t.Fatalf("admin list %+v", adminList)
 	}
+	// Инструкция заглушки - стандартный набор: администратор ее не удаляет
 	for _, document := range adminList.Documents {
-		if !document.CanDelete || document.Scope != texts.ScopeGlobal {
+		if document.CanDelete == document.Standard || document.Scope != texts.ScopeGlobal || document.Standard != (document.DocumentID == texts.SeedInstructionID) {
 			t.Fatalf("admin seed %+v", document)
 		}
 	}

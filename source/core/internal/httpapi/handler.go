@@ -63,7 +63,10 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 			return nil, err
 		}
 		apply_SavedAISettings(store, embedder)
-		// После смены размерности векторов или прерванной переиндексации - пересчет в фоне текущей моделью
+		if err := sync_StandardDocuments(store, loadedConfig.StandardDocsDir); err != nil {
+			return nil, err
+		}
+		// После смены размерности векторов, прерванной переиндексации или загрузки стандартного набора - пересчет в фоне
 		store.Start_PendingReindex()
 		routeMux = register_LiveRoutes(store, embedder, layoutFormat)
 		register_AIRoutes(routeMux, create_LiveAIAdmin(store, embedder))

@@ -331,8 +331,10 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 				return;
 			}
 			messages = Array.isArray(payload?.messages) ? payload.messages : [];
-			if (typeof payload?.processId === 'string') {
-				processPicker.set_ProcessId(payload.processId);
+			if (Array.isArray(payload?.processIds)) {
+				processPicker.set_ProcessIds(payload.processIds);
+			} else if (typeof payload?.processId === 'string') {
+				processPicker.set_ProcessIds(payload.processId);
 			}
 			if (typeof payload?.mode === 'string') {
 				modeSwitch.set_Mode(payload.mode);
@@ -374,7 +376,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		try {
 			const activeSessionId = await ensure_Session(text);
 			const reply = await send_ChatMessage(activeSessionId, text, {
-				processId: processPicker.get_ProcessId(),
+				processIds: processPicker.get_ProcessIds(),
 				mode: modeSwitch.get_Mode(),
 				answers: userMessage.answers?.map(({ field, value }) => ({ field, value })),
 			});
@@ -452,7 +454,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			const uploaded = await upload_SessionAttachment(activeSessionId, file);
 			requestMessage.attachments = [{ attachmentId: uploaded.attachmentId, fileName: uploaded.fileName }];
 			const reply = await send_ChatMessage(activeSessionId, question, {
-				processId: processPicker.get_ProcessId(),
+				processIds: processPicker.get_ProcessIds(),
 				mode: modeSwitch.get_Mode(),
 				attachmentIds: [uploaded.attachmentId],
 			});

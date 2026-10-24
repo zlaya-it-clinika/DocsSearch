@@ -102,9 +102,27 @@ function render_Contacts(contacts) {
 	]);
 }
 
+// Справка о документе: документ целиком для скачивания
+function render_Download(download) {
+	const url = build_LinkedFileUrl(download?.link, '/documents/');
+	if (!url) {
+		return null;
+	}
+	return create_Element('div', { className: 'message-download' }, [
+		create_Element('a', {
+			className: 'button button-ghost message-download-button',
+			attrs: { href: url, target: '_blank', rel: 'noopener', title: download.document },
+		}, [create_Icon('download', 'icon-sm'), create_Element('span', { text: `${ChatTexts.downloadDocument}: ${download.document}` })]),
+	]);
+}
+
 function render_AnswerBody(message) {
 	const citations = Array.isArray(message.citations) ? message.citations : [];
 	const children = [render_Markdown(message.text)];
+	const download = render_Download(message.download);
+	if (download) {
+		children.push(download);
+	}
 	if (Number(message.relevancePercent) > 0) {
 		children.push(render_Relevance(message.relevancePercent));
 	}
@@ -255,16 +273,20 @@ function create_AssistantHeader(kind) {
 	]);
 }
 
-// Где искал ответ: категория, выбранная в чате. При поиске по всем знаниям ядро поле не отдаёт
+// Где искал ответ: категории, выбранные в чате. При поиске по всем знаниям ядро поле не отдаёт
 function render_SearchScope(message) {
 	const process = message.process;
 	if (!process?.processId) {
 		return null;
 	}
-	const known = get_KnownProcess(process.processId);
+	const ids = Array.isArray(process.processIds) && process.processIds.length > 0 ? process.processIds : [process.processId];
+	const titles = String(process.title ?? '').split(', ');
 	return create_Element('div', { className: 'message-scope' }, [
 		create_Element('span', { text: `${ProcessTexts.searchedIn}:` }),
-		create_ProcessBadge({ title: process.title, color: known?.color, description: known?.description }),
+		...ids.map((processId, index) => {
+			const known = get_KnownProcess(processId);
+			return create_ProcessBadge({ title: known?.title ?? titles[index] ?? processId, color: known?.color, description: known?.description });
+		}),
 	]);
 }
 

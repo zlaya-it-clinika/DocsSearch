@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -59,6 +60,20 @@ type documentRecord struct {
 	body         []byte
 	visibleToAll bool
 	roleIDs      []string
+	// Документ стандартного набора: удалить нельзя
+	standard bool
+	// Прежние редакции, новые в конце
+	editions []stubEdition
+}
+
+type stubEdition struct {
+	id          string
+	edition     string
+	fileName    string
+	contentType string
+	body        []byte
+	uploadedAt  time.Time
+	archivedAt  time.Time
 }
 
 type processRecord struct {
@@ -151,11 +166,15 @@ type assistantReply struct {
 	Process *processRef `json:"process,omitempty"`
 	// Подсказка под ответом: в режиме «Чтение» документы не готовятся
 	Hint string `json:"hint,omitempty"`
+	// Справка о документе: документ целиком для скачивания
+	Download *replyDownload `json:"download,omitempty"`
 }
 
 type processRef struct {
 	ProcessID string `json:"processId"`
 	Title     string `json:"title"`
+	// Все выбранные процессы, когда их несколько
+	ProcessIDs []string `json:"processIds,omitempty"`
 }
 
 type messageAttachment struct {
@@ -241,6 +260,34 @@ type documentResponse struct {
 	VisibleToAll bool     `json:"visibleToAll"`
 	RoleIDs      []string `json:"roleIds"`
 	CanDelete    bool     `json:"canDelete"`
+	// Документ стандартного набора компании: всегда в базе знаний, удалить нельзя
+	Standard bool `json:"standard"`
+	// Сколько прежних редакций в архиве
+	ArchivedEditions int `json:"archivedEditions"`
+}
+
+type editionResponse struct {
+	EditionID  string `json:"editionId"`
+	Edition    string `json:"edition"`
+	FileName   string `json:"fileName"`
+	UploadedAt string `json:"uploadedAt"`
+	ArchivedAt string `json:"archivedAt"`
+	FileLink   string `json:"fileLink"`
+}
+
+type editionsResponse struct {
+	Editions []editionResponse `json:"editions"`
+}
+
+func build_EditionResponse(documentID, editionID, edition, fileName string, uploadedAt, archivedAt time.Time) editionResponse {
+	return editionResponse{
+		EditionID:  editionID,
+		Edition:    edition,
+		FileName:   fileName,
+		UploadedAt: uploadedAt.UTC().Format(time.RFC3339),
+		ArchivedAt: archivedAt.UTC().Format(time.RFC3339),
+		FileLink:   "/documents/" + documentID + "/editions/" + editionID + "/file",
+	}
 }
 
 type uploadResponse struct {
@@ -319,6 +366,7 @@ type stub struct {
 	nextAudit           int
 	nextRole            int
 	nextPermissionEvent int
+	nextEdition         int
 	// Настройки входа живут в памяти, как и остальные данные заглушки
 	signupSettings auth.SignupSettings
 	ldapSettings   auth.LdapSettings
@@ -365,6 +413,8 @@ func create_StubStore(withoutUsers bool, authDefaults auth.Settings, layoutForma
 	}
 	stubStore.add_DefaultProcess()
 	stubStore.addDocument(texts.SeedInstructionID, texts.SeedInstructionTitle, texts.EditionDefault, texts.SeedDocumentAccessOpen, texts.SeedInstructionFileName, texts.PlainTextContentType, []byte(texts.SeedInstructionBody))
+	// Инструкция заглушки - ее стандартный набор, как source/docs в боевом режиме
+	stubStore.documentsByID[texts.SeedInstructionID].standard = true
 	stubStore.addDocument(texts.SeedRestrictedID, texts.SeedRestrictedTitle, texts.EditionDefault, texts.SeedDocumentAccessClosed, texts.SeedRestrictedFileName, texts.PlainTextContentType, []byte(texts.SeedRestrictedBody))
 	return stubStore
 }
@@ -488,6 +538,8 @@ func (stubStore *stub) register_StubRoutes() *http.ServeMux {
 	routeMux.HandleFunc("PATCH /processes/{processId}", stubStore.serve_PatchProcess)
 	routeMux.HandleFunc("DELETE /processes/{processId}", stubStore.serve_DeleteProcess)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", stubStore.serve_DocumentFile)
+	routeMux.HandleFunc("GET /documents/{documentId}/editions", stubStore.serve_ListEditions)
+	routeMux.HandleFunc("GET /documents/{documentId}/editions/{editionId}/file", stubStore.serve_EditionFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", stubStore.serve_DeleteDocument)
 	routeMux.HandleFunc("GET /blanks/{blankId}/file", stubStore.serve_BlankFile)
 	routeMux.HandleFunc("GET /drafts/{draftId}/file", stubStore.serve_DraftFile)
@@ -614,19 +666,22 @@ func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, 
 		return
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		SessionID string `json:"sessionId"`
-		ProcessID string `json:"processId"`
-		Messages  []any  `json:"messages"`
-		Mode      string `json:"mode"`
-	}{SessionID: session.id, ProcessID: stubStore.saved_SessionProcess(session), Messages: session.messages, Mode: saved_ChatMode(session.chatMode)})
+		SessionID  string   `json:"sessionId"`
+		ProcessID  string   `json:"processId"`
+		ProcessIDs []string `json:"processIds"`
+		Messages   []any    `json:"messages"`
+		Mode       string   `json:"mode"`
+	}{SessionID: session.id, ProcessID: stubStore.saved_SessionProcess(session), ProcessIDs: split_ProcessSelection(stubStore.saved_SessionProcess(session)), Messages: session.messages, Mode: saved_ChatMode(session.chatMode)})
 }
 
 func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Text string `json:"text"`
 		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
-		ProcessID     *string  `json:"processId"`
-		AttachmentIDs []string `json:"attachmentIds"`
+		ProcessID *string `json:"processId"`
+		// Несколько процессов сразу, важнее processId
+		ProcessIDs    *[]string `json:"processIds"`
+		AttachmentIDs []string  `json:"attachmentIds"`
 		// nil - режим, сохраненный в сессии: read или plan
 		Mode *string `json:"mode"`
 		// Ответы на вопросы документа пачкой. text - их запись для ленты
@@ -649,14 +704,17 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	record := stubStore.usersByID[session.ownerID]
 	permissions := stubStore.permissions_Of(record)
 	processID := stubStore.saved_SessionProcess(session)
-	if body.ProcessID != nil {
-		processID = strings.TrimSpace(*body.ProcessID)
+	requestedProcess := read_RequestedProcesses(body.ProcessID, body.ProcessIDs)
+	if requestedProcess != nil {
+		processID = *requestedProcess
 	}
-	if processID != "" && stubStore.processesByID[processID] == nil {
-		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
-		return
+	for _, id := range split_ProcessSelection(processID) {
+		if stubStore.processesByID[id] == nil {
+			write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+			return
+		}
 	}
-	if body.ProcessID != nil {
+	if requestedProcess != nil {
 		session.processID = processID
 	}
 	mode, modeOK := resolve_ChatMode(body.Mode, session.chatMode)
@@ -688,8 +746,14 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	if handled {
 		step = *plan.Blank
 	}
+	var overview overviewResult
+	if plan.Reply == nil && !layoutHandled && !handled && len(body.AttachmentIDs) == 0 && auth.Has_Permission(permissions, texts.PermissionChatUse) {
+		overview = stubStore.find_DocumentOverview(record, body.Text, processID)
+	}
 	if plan.Reply != nil {
 		reply = *plan.Reply
+	} else if overview.Found {
+		reply = overview.Reply
 	} else if layoutHandled {
 		reply = reply_FromLayout(layoutStep)
 		if layoutStep.Ready && len(layoutStep.Docx) > 0 {
@@ -858,6 +922,19 @@ func (stubStore *stub) store_Document(title, edition string, accessLevel int, sc
 	for _, document := range stubStore.documents {
 		if !same_DocumentTitle(document, title, scope, ownerID) {
 			continue
+		}
+		// Прежняя редакция с другим содержимым уходит в архив
+		if !bytes.Equal(document.body, body) {
+			stubStore.nextEdition++
+			document.editions = append(document.editions, stubEdition{
+				id:          strconv.Itoa(stubStore.nextEdition),
+				edition:     document.edition,
+				fileName:    document.fileName,
+				contentType: document.contentType,
+				body:        document.body,
+				uploadedAt:  document.uploadedAt,
+				archivedAt:  now,
+			})
 		}
 		document.edition = edition
 		document.accessLevel = accessLevel
@@ -1068,6 +1145,60 @@ func (stubStore *stub) serve_DocumentFile(responseWriter http.ResponseWriter, re
 	_, _ = responseWriter.Write(document.body)
 }
 
+// Документ, который сотрудник видит, или код ошибки для ответа
+func (stubStore *stub) find_ReadableDocument(responseWriter http.ResponseWriter, request *http.Request) (*documentRecord, bool) {
+	record, found := stubStore.find_UserByBearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return nil, false
+	}
+	document := stubStore.documentsByID[request.PathValue("documentId")]
+	if document == nil {
+		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+		return nil, false
+	}
+	if status := document_ReadStatus(record.id, stubStore.permissions_Of(record), record.roleIDs, document.scope, document.ownerID, document.visibleToAll, document.roleIDs); status != http.StatusOK {
+		if status == http.StatusNotFound {
+			write_ErrorResponse(responseWriter, status, texts.ErrorNotFound)
+			return nil, false
+		}
+		write_ErrorResponse(responseWriter, status, texts.ErrorAccessDenied)
+		return nil, false
+	}
+	return document, true
+}
+
+func (stubStore *stub) serve_ListEditions(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	document, found := stubStore.find_ReadableDocument(responseWriter, request)
+	if !found {
+		return
+	}
+	lines := make([]editionResponse, 0, len(document.editions))
+	for index := len(document.editions) - 1; index >= 0; index-- {
+		edition := document.editions[index]
+		lines = append(lines, build_EditionResponse(document.id, edition.id, edition.edition, edition.fileName, edition.uploadedAt, edition.archivedAt))
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, editionsResponse{Editions: lines})
+}
+
+func (stubStore *stub) serve_EditionFile(responseWriter http.ResponseWriter, request *http.Request) {
+	stubStore.mu.Lock()
+	defer stubStore.mu.Unlock()
+	document, found := stubStore.find_ReadableDocument(responseWriter, request)
+	if !found {
+		return
+	}
+	for _, edition := range document.editions {
+		if edition.id == request.PathValue("editionId") {
+			write_FileResponse(responseWriter, edition.fileName, edition.contentType, edition.body)
+			return
+		}
+	}
+	write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
+}
+
 func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, request *http.Request) {
 	stubStore.mu.Lock()
 	defer stubStore.mu.Unlock()
@@ -1092,6 +1223,10 @@ func (stubStore *stub) serve_DeleteDocument(responseWriter http.ResponseWriter, 
 	}
 	if !check_CanDeleteDocument(record.id, stubStore.permissions_Of(record), document.scope, document.ownerID) {
 		write_ErrorResponse(responseWriter, http.StatusForbidden, texts.ErrorAccessDenied)
+		return
+	}
+	if document.standard {
+		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorStandardDocument)
 		return
 	}
 	delete(stubStore.documentsByID, documentID)
@@ -1488,18 +1623,20 @@ func build_SessionTitle(text string) string {
 
 func (document *documentRecord) line(viewer *userRecord, ownerName string, permissions []string) documentResponse {
 	return documentResponse{
-		DocumentID:   document.id,
-		Title:        document.title,
-		Edition:      document.edition,
-		AccessLevel:  document.accessLevel,
-		Scope:        document.scope,
-		ProcessID:    document.processID,
-		OwnerID:      document.ownerID,
-		OwnerName:    ownerName,
-		UploadedAt:   document.uploadedAt.UTC().Format(time.RFC3339),
-		VisibleToAll: document.visibleToAll,
-		RoleIDs:      copy_Strings(document.roleIDs),
-		CanDelete:    check_CanDeleteDocument(viewer.id, permissions, document.scope, document.ownerID),
+		DocumentID:       document.id,
+		Title:            document.title,
+		Edition:          document.edition,
+		AccessLevel:      document.accessLevel,
+		Scope:            document.scope,
+		ProcessID:        document.processID,
+		OwnerID:          document.ownerID,
+		OwnerName:        ownerName,
+		UploadedAt:       document.uploadedAt.UTC().Format(time.RFC3339),
+		VisibleToAll:     document.visibleToAll,
+		RoleIDs:          copy_Strings(document.roleIDs),
+		CanDelete:        check_CanDeleteDocument(viewer.id, permissions, document.scope, document.ownerID) && !document.standard,
+		Standard:         document.standard,
+		ArchivedEditions: len(document.editions),
 	}
 }
 

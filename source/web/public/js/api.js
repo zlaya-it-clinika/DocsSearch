@@ -160,8 +160,10 @@ export function fetch_ChatSession(sessionId) {
 
 export function send_ChatMessage(sessionId, text, extra = {}) {
 	const json = { text };
-	// Пустая строка - все категории, её тоже отправляем: ядро запоминает выбор в сессии
-	if (typeof extra.processId === 'string') {
+	// Несколько категорий сразу. Пустой список - все категории, его тоже отправляем: ядро запоминает выбор в сессии
+	if (Array.isArray(extra.processIds)) {
+		json.processIds = extra.processIds;
+	} else if (typeof extra.processId === 'string') {
 		json.processId = extra.processId;
 	}
 	if (Array.isArray(extra.attachmentIds) && extra.attachmentIds.length > 0) {
@@ -187,6 +189,11 @@ export function upload_SessionAttachment(sessionId, file) {
 // Документы
 
 // scope: global, personal или all (all - только администратор). Без параметра - всё, что видит пользователь
+// Архив прежних редакций документа: новые первыми, у каждой fileLink для скачивания
+export function list_DocumentEditions(documentId) {
+	return request_Api('GET', `/documents/${encode_Segment(documentId)}/editions`);
+}
+
 export function list_Documents(scope = '') {
 	const query = scope ? `?scope=${encodeURIComponent(scope)}` : '';
 	return request_Api('GET', `/documents${query}`);

@@ -65,6 +65,8 @@ func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	routeMux.HandleFunc("PATCH /processes/{processId}", api.serve_PatchProcess)
 	routeMux.HandleFunc("DELETE /processes/{processId}", api.serve_DeleteProcess)
 	routeMux.HandleFunc("GET /documents/{documentId}/file", api.serve_DocumentFile)
+	routeMux.HandleFunc("GET /documents/{documentId}/editions", api.serve_ListEditions)
+	routeMux.HandleFunc("GET /documents/{documentId}/editions/{editionId}/file", api.serve_EditionFile)
 	routeMux.HandleFunc("GET /blanks/{blankId}/file", api.serve_BlankFile)
 	routeMux.HandleFunc("GET /drafts/{draftId}/file", api.serve_DraftFile)
 	routeMux.HandleFunc("DELETE /documents/{documentId}", api.serve_DeleteDocument)
@@ -414,19 +416,22 @@ func (api *liveAPI) serve_SessionHistory(responseWriter http.ResponseWriter, req
 		return
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
-		SessionID string            `json:"sessionId"`
-		ProcessID string            `json:"processId"`
-		Mode      string            `json:"mode"`
-		Messages  []json.RawMessage `json:"messages"`
-	}{SessionID: request.PathValue("sessionId"), ProcessID: processID, Mode: saved_ChatMode(savedMode), Messages: rawMessages})
+		SessionID  string            `json:"sessionId"`
+		ProcessID  string            `json:"processId"`
+		ProcessIDs []string          `json:"processIds"`
+		Mode       string            `json:"mode"`
+		Messages   []json.RawMessage `json:"messages"`
+	}{SessionID: request.PathValue("sessionId"), ProcessID: processID, ProcessIDs: split_ProcessSelection(processID), Mode: saved_ChatMode(savedMode), Messages: rawMessages})
 }
 
 func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
 	var body struct {
 		Text string `json:"text"`
 		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
-		ProcessID     *string  `json:"processId"`
-		AttachmentIDs []string `json:"attachmentIds"`
+		ProcessID *string `json:"processId"`
+		// Несколько процессов сразу, важнее processId. Пустой список - все процессы
+		ProcessIDs    *[]string `json:"processIds"`
+		AttachmentIDs []string  `json:"attachmentIds"`
 		// nil - режим, сохраненный в сессии: read или plan
 		Mode *string `json:"mode"`
 		// Ответы на вопросы документа пачкой. text - их запись для ленты
@@ -446,12 +451,13 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
-	processID, err := api.resolve_MessageProcess(request.Context(), request.PathValue("sessionId"), body.ProcessID)
+	requestedProcess := read_RequestedProcesses(body.ProcessID, body.ProcessIDs)
+	processID, err := api.resolve_MessageProcess(request.Context(), request.PathValue("sessionId"), requestedProcess)
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return
 	}
-	prompts, promptError := api.store.Load_ReplyPrompts(request.Context(), processID)
+	prompts, promptError := api.store.Load_ReplyPrompts(request.Context(), reply_PromptProcess(processID))
 	if promptError != nil {
 		write_LiveError(responseWriter, promptError)
 		return
@@ -513,9 +519,26 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			return
 		}
 	}
+	// Вопрос, который называет документ целиком, - справка о документе и кнопка скачивания
+	var overview overviewResult
+	if plan.Reply == nil && !layoutHandled && !handled && !revising && account.Has(texts.PermissionChatUse) {
+		var overviewError error
+		overview, overviewError = api.find_DocumentOverview(request.Context(), token, body.Text, processID)
+		if overviewError != nil {
+			write_LiveError(responseWriter, overviewError)
+			return
+		}
+	}
 	if plan.Reply != nil {
 		reply = *plan.Reply
 		documents = []shownDocument{}
+	} else if overview.Found {
+		reply = reply_WithProcess(overview.Reply, searchedProcess)
+		documents = overview.Documents
+		if citationError := api.fill_CitationProcesses(request.Context(), &reply); citationError != nil {
+			write_LiveError(responseWriter, citationError)
+			return
+		}
 	} else if layoutHandled {
 		reply = reply_FromLayout(layoutStep)
 		documents = []shownDocument{}
@@ -649,7 +672,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
-	if body.ProcessID != nil {
+	if requestedProcess != nil {
 		if err := api.store.Save_SessionProcess(request.Context(), request.PathValue("sessionId"), processID); err != nil {
 			write_LiveError(responseWriter, err)
 			return
@@ -706,7 +729,10 @@ func (api *liveAPI) serve_ListDocuments(responseWriter http.ResponseWriter, requ
 			UploadedAt:   line.UploadedAt.UTC().Format(time.RFC3339),
 			VisibleToAll: line.VisibleToAll,
 			RoleIDs:      copy_Strings(line.RoleIDs),
-			CanDelete:    check_CanDeleteDocument(account.UserID, account.Permissions, line.Scope, line.OwnerID),
+			// Стандартный набор удалить нельзя, только заменить новой редакцией
+			CanDelete:        check_CanDeleteDocument(account.UserID, account.Permissions, line.Scope, line.OwnerID) && !line.Standard,
+			Standard:         line.Standard,
+			ArchivedEditions: line.ArchivedEditions,
 		})
 	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
@@ -981,6 +1007,39 @@ func (api *liveAPI) serve_DocumentFile(responseWriter http.ResponseWriter, reque
 	_, _ = responseWriter.Write(file.Body)
 }
 
+func (api *liveAPI) serve_ListEditions(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	documentID := request.PathValue("documentId")
+	editions, err := api.store.List_DocumentEditions(request.Context(), token, documentID)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	lines := make([]editionResponse, 0, len(editions))
+	for _, edition := range editions {
+		lines = append(lines, build_EditionResponse(documentID, edition.EditionID, edition.Edition, edition.FileName, edition.UploadedAt, edition.ArchivedAt))
+	}
+	write_JSONResponse(responseWriter, http.StatusOK, editionsResponse{Editions: lines})
+}
+
+func (api *liveAPI) serve_EditionFile(responseWriter http.ResponseWriter, request *http.Request) {
+	token, found := read_BearerToken(request)
+	if !found {
+		write_ErrorResponse(responseWriter, http.StatusUnauthorized, texts.ErrorUnauthorized)
+		return
+	}
+	file, err := api.store.Read_EditionFile(request.Context(), token, request.PathValue("documentId"), request.PathValue("editionId"))
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	write_FileResponse(responseWriter, file.FileName, file.ContentType, file.Body)
+}
+
 func (api *liveAPI) serve_DeleteDocument(responseWriter http.ResponseWriter, request *http.Request) {
 	token, found := read_BearerToken(request)
 	if !found {
@@ -1156,6 +1215,8 @@ func write_LiveError(responseWriter http.ResponseWriter, err error) {
 		write_ErrorResponse(responseWriter, http.StatusNotFound, texts.ErrorNotFound)
 	case errors.Is(err, livestore.ErrLoginTaken):
 		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorLoginTaken)
+	case errors.Is(err, livestore.ErrStandardDocument):
+		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorStandardDocument)
 	case errors.Is(err, livestore.ErrRoleInUse):
 		write_ErrorResponse(responseWriter, http.StatusConflict, texts.ErrorRoleInUse)
 	case errors.Is(err, livestore.ErrUnsupportedFile), errors.Is(err, livestore.ErrInvalidBody):

@@ -50,3 +50,9 @@ func Read_Folder(rawPath string) (FolderListing, error) {
 	}
 	return listing, nil
 }
+
+// Название документа по имени файла: «Матрица_визирования.docx» - «Матрица визирования»
+func Title_FromFileName(name string) string {
+	stem := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	return strings.Join(strings.Fields(strings.ReplaceAll(stem, "_", " ")), " ")
+}

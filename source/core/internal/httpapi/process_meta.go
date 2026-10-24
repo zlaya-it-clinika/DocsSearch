@@ -100,38 +100,69 @@ func reply_WithProcess(reply assistantReply, ref *processRef) assistantReply {
 	return reply
 }
 
-// Процесс для сообщения: из тела запроса, иначе сохранённый в сессии.
-// Сохранённый процесс мог быть удалён - тогда ищем по всем
+// Процессы для сообщения: из тела запроса, иначе сохранённые в сессии. Коды через запятую.
+// Неизвестный процесс в запросе - ошибка. Сохранённый процесс мог быть удалён - он выпадает из выбора
 func (api *liveAPI) resolve_MessageProcess(ctx context.Context, sessionID string, requested *string) (string, error) {
 	if requested != nil {
-		return strings.TrimSpace(*requested), nil
+		for _, id := range split_ProcessSelection(*requested) {
+			if _, findError := api.store.Find_Process(ctx, id); findError != nil {
+				return "", livestore.ErrInvalidBody
+			}
+		}
+		return join_ProcessSelection([]string{*requested}), nil
 	}
 	saved, err := api.store.Read_SessionProcess(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
-	if saved == "" {
-		return "", nil
+	known := []string{}
+	for _, id := range split_ProcessSelection(saved) {
+		if _, findError := api.store.Find_Process(ctx, id); findError == nil {
+			known = append(known, id)
+		}
 	}
-	if _, findError := api.store.Find_Process(ctx, saved); findError != nil {
-		return "", nil
-	}
-	return saved, nil
+	return join_ProcessSelection(known), nil
 }
 
-func (api *liveAPI) build_ProcessBrief(ctx context.Context, processID string, roleIDs []string) (string, *processRef, error) {
-	if processID == "" {
+// Подсказки модели: у одного процесса - его собственные, у нескольких - общие «Документооборота»
+func reply_PromptProcess(selection string) string {
+	ids := split_ProcessSelection(selection)
+	if len(ids) == 1 {
+		return ids[0]
+	}
+	return ""
+}
+
+// «Карта» выбранных процессов для подсказки модели и отметка, где искали ответ
+func (api *liveAPI) build_ProcessBrief(ctx context.Context, selection string, roleIDs []string) (string, *processRef, error) {
+	ids := split_ProcessSelection(selection)
+	if len(ids) == 0 {
 		return "", nil, nil
 	}
-	card, err := api.store.Find_ProcessCard(ctx, processID)
-	if err != nil {
-		return "", nil, err
+	briefs := make([]string, 0, len(ids))
+	titles := make([]string, 0, len(ids))
+	for _, id := range ids {
+		card, err := api.store.Find_ProcessCard(ctx, id)
+		if err != nil {
+			return "", nil, err
+		}
+		documentTitles, err := api.store.List_ProcessDocumentTitles(ctx, id, roleIDs, texts.ProcessMapLimit)
+		if err != nil {
+			return "", nil, err
+		}
+		briefs = append(briefs, format_ProcessBrief(card.Title, card.Description, documentTitles))
+		titles = append(titles, card.Title)
 	}
-	titles, err := api.store.List_ProcessDocumentTitles(ctx, processID, roleIDs, texts.ProcessMapLimit)
-	if err != nil {
-		return "", nil, err
+	return strings.Join(briefs, "\n\n"), build_ProcessRef(ids, titles), nil
+}
+
+// Один процесс - как раньше, несколько - коды и названия через запятую
+func build_ProcessRef(ids, titles []string) *processRef {
+	return &processRef{
+		ProcessID:  join_ProcessSelection(ids),
+		Title:      strings.Join(titles, texts.ProcessTitleSeparator),
+		ProcessIDs: append([]string{}, ids...),
 	}
-	return format_ProcessBrief(card.Title, card.Description, titles), &processRef{ProcessID: card.ProcessID, Title: card.Title}, nil
 }
 
 func (api *liveAPI) fill_CitationProcesses(ctx context.Context, reply *assistantReply) error {

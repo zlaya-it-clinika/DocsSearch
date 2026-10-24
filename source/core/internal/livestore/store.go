@@ -36,6 +36,7 @@ var (
 	ErrAccountPending     = errors.New("account pending")
 	ErrLdapDisabled       = errors.New("ldap disabled")
 	ErrKerberosDisabled   = errors.New("kerberos disabled")
+	ErrStandardDocument   = errors.New("standard document")
 )
 
 type Embedder interface {
@@ -75,6 +76,9 @@ type DocumentLine struct {
 	ProcessID    string
 	VisibleToAll bool
 	RoleIDs      []string
+	Standard     bool
+	// Сколько прежних редакций в архиве
+	ArchivedEditions int
 }
 
 type DocumentFile struct {
@@ -159,7 +163,7 @@ func (store *LiveStore) apply_Schema(ctx context.Context) error {
 
 func read_MigrationSQL() (string, error) {
 	var builder strings.Builder
-	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql", "008_organization.sql", "009_chat_mode.sql"} {
+	for _, name := range []string{"001_init.sql", "002_processes.sql", "003_roles.sql", "004_attachments.sql", "005_groups.sql", "006_process_meta.sql", "007_single_role.sql", "008_organization.sql", "009_chat_mode.sql", "010_document_editions.sql"} {
 		raw, err := read_MigrationFile(name)
 		if err != nil {
 			return "", err

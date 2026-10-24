@@ -156,7 +156,10 @@ func (store *LiveStore) Delete_Process(ctx context.Context, token, processID str
 	if _, err := tx.Exec(ctx, `UPDATE documents SET process_id = $2 WHERE process_id = $1`, processID, texts.ProcessDocuments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE sessions SET process_id = '' WHERE process_id = $1`, processID); err != nil {
+	// Удаленный процесс выпадает из выбора чатов, остальные выбранные процессы остаются
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions SET process_id = array_to_string(array_remove(string_to_array(process_id, ','), $1), ',')
+		WHERE $1 = ANY(string_to_array(process_id, ','))`, processID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -174,7 +177,7 @@ func (store *LiveStore) Find_ProcessCard(ctx context.Context, processID string) 
 	return card, err
 }
 
-// Процесс, выбранный в чате. Пустая строка - все процессы
+// Процессы, выбранные в чате, через запятую. Пустая строка - все процессы
 func (store *LiveStore) Read_SessionProcess(ctx context.Context, sessionID string) (string, error) {
 	var processID string
 	err := store.pool.QueryRow(ctx, `SELECT process_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&processID)

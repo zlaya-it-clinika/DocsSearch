@@ -35,6 +35,8 @@ services:
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       OLLAMA_EMBED_DIMENSIONS: ${OLLAMA_EMBED_DIMENSIONS:-768}
       LAYOUT_FORMAT_PRIORITY: ${LAYOUT_FORMAT_PRIORITY:-}
+      # Стандартный набор документов компании: каталог source/docs, при каждом запуске ядра он в базе знаний
+      STANDARD_DOCS_DIR: /app/standard-docs
       # Вход и регистрация: начальные значения, дальше настраиваются в админ-панели
       STUB_SEED_USERS: ${STUB_SEED_USERS:-true}
       ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
@@ -56,10 +58,11 @@ services:
       LDAP_CIPHERS: ${LDAP_CIPHERS:-ALL}
       ENABLE_LDAP_GROUP_MANAGEMENT: ${ENABLE_LDAP_GROUP_MANAGEMENT:-false}
       LDAP_ATTRIBUTE_FOR_GROUPS: ${LDAP_ATTRIBUTE_FOR_GROUPS:-memberOf}
-    # Сертификат CA компании для LDAPS: положить в source/certs, раскомментировать
-    # и указать путь /certs/<файл>.pem в LDAP_CA_CERT_FILE или в админ-панели
-    # volumes:
+    volumes:
+      - ${STANDARD_DOCS_PATH:-./docs}:/app/standard-docs:ro
+    # Сертификат CA компании для LDAPS: положить в source/certs, добавить в volumes строку
     #   - ./certs:/certs:ro
+    # и указать путь /certs/<файл>.pem в LDAP_CA_CERT_FILE или в админ-панели
     # Только для отладки с этой машины: страница /docs ядра. Браузеры сотрудников ходят через веб
     ports:
       - "127.0.0.1:${API_PORT_LOCAL:-8080}:8080"
