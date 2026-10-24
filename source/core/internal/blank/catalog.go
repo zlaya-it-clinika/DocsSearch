@@ -44,6 +44,9 @@ func Catalog() ([]Blank, error) {
 				catalogErr = parseErr
 				return
 			}
+			if name := read_DocxTitle(body); name != "" {
+				parsed.Name = name
+			}
 			loaded = append(loaded, parsed)
 		}
 		catalog = loaded

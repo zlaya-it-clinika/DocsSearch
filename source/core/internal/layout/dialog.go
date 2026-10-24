@@ -81,7 +81,7 @@ func Advance_Layout(state State, text string, organization Organization, format 
 	if !found {
 		return Step{Cancelled: true}
 	}
-	if check_IsCancel(text) {
+	if Check_IsCancel(text) {
 		return Step{LayoutID: info.ID, Name: info.Name, Cancelled: true}
 	}
 	if state.Answers == nil {

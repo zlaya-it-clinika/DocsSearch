@@ -1,6 +1,7 @@
 // Экран чата: история сессии, отправка вопросов, проверка черновика.
 // Один и тот же экран работает на полной странице и в виджете (compact).
 import { check_Draft, create_ChatSession, fetch_ChatSession, send_ChatMessage, upload_SessionAttachment } from '../api.js';
+import { create_ModeSwitch } from '../components/mode-switch.js';
 import { create_ProcessPicker } from '../components/process-picker.js';
 import { create_Composer } from '../components/composer.js';
 import { MessageKinds, render_Message, render_PendingMessage } from '../components/message.js';
@@ -42,12 +43,14 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 
 	// Категория знаний для поиска. Для открытого чата её потом подставит история сессии
 	const processPicker = create_ProcessPicker({ user });
+	// Режим чата: «Чтение» или «План». Для открытого чата его подставит история сессии
+	const modeSwitch = create_ModeSwitch({ user, config, onChange: () => update_FieldPrompt() });
 	const composer = create_Composer({
 		onSubmit: (payload) => handle_Submit(payload),
 		allowCheck,
 		allowAssist,
 		config,
-		tools: [processPicker.element],
+		tools: [modeSwitch.element, processPicker.element],
 	});
 	const quickActions = create_Element('div', { className: 'quick-actions' });
 	quickActions.hidden = true;
@@ -103,10 +106,18 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		return messages.find((message) => message.role === 'user' && message.text)?.text ?? '';
 	}
 
-	// Если ассистент спросил поле бланка, подсказка в поле ввода называет это поле
+	// Если ассистент спросил поле бланка, подсказка в поле ввода называет это поле. В «Чтении» документ
+	// не продолжается, поэтому там подсказка обычная
 	function update_FieldPrompt() {
+		const isPlan = modeSwitch.is_Plan();
+		composer.set_IdlePlaceholder(isPlan ? ChatTexts.placeholderPlan : ChatTexts.placeholder);
 		const lastMessage = messages[messages.length - 1];
-		const isFieldQuestion = lastMessage?.role === 'assistant' && lastMessage.kind === MessageKinds.templateField;
+		const isAssistant = lastMessage?.role === 'assistant' && isPlan;
+		if (isAssistant && lastMessage.kind === MessageKinds.templateChoice) {
+			composer.set_AnswerPrompt(ChatTexts.placeholderChoice);
+			return;
+		}
+		const isFieldQuestion = isAssistant && lastMessage.kind === MessageKinds.templateField;
 		composer.set_FieldPrompt(isFieldQuestion ? (lastMessage.template?.fieldLabel ?? lastMessage.template?.field) : null);
 	}
 
@@ -161,6 +172,9 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			if (typeof payload?.processId === 'string') {
 				processPicker.set_ProcessId(payload.processId);
 			}
+			if (typeof payload?.mode === 'string') {
+				modeSwitch.set_Mode(payload.mode);
+			}
 			loading = false;
 			render_View();
 			scroll_ToBottom();
@@ -195,7 +209,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		scroll_ToBottom();
 		try {
 			const activeSessionId = await ensure_Session(text);
-			const reply = await send_ChatMessage(activeSessionId, text, { processId: processPicker.get_ProcessId() });
+			const reply = await send_ChatMessage(activeSessionId, text, { processId: processPicker.get_ProcessId(), mode: modeSwitch.get_Mode() });
 			messages.push({ ...reply, role: 'assistant' });
 			history?.remember_Chat(activeSessionId, build_ChatTitle(find_FirstQuestion()));
 		} catch (error) {
@@ -269,6 +283,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 			requestMessage.attachments = [{ attachmentId: uploaded.attachmentId, fileName: uploaded.fileName }];
 			const reply = await send_ChatMessage(activeSessionId, question, {
 				processId: processPicker.get_ProcessId(),
+				mode: modeSwitch.get_Mode(),
 				attachmentIds: [uploaded.attachmentId],
 			});
 			messages.push({ ...reply, role: 'assistant' });

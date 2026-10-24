@@ -243,3 +243,18 @@ func (store *LiveStore) List_Audit(ctx context.Context, token string) ([]AuditLi
 	}
 	return entries, rows.Err()
 }
+
+// Режим чата сессии: read или plan (texts.ChatMode...)
+func (store *LiveStore) Read_SessionMode(ctx context.Context, sessionID string) (string, error) {
+	var mode string
+	err := store.pool.QueryRow(ctx, `SELECT chat_mode FROM sessions WHERE session_id = $1`, sessionID).Scan(&mode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return mode, err
+}
+
+func (store *LiveStore) Save_SessionMode(ctx context.Context, sessionID, mode string) error {
+	_, err := store.pool.Exec(ctx, `UPDATE sessions SET chat_mode = $2 WHERE session_id = $1`, sessionID, mode)
+	return err
+}

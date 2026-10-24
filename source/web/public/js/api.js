@@ -167,6 +167,10 @@ export function send_ChatMessage(sessionId, text, extra = {}) {
 	if (Array.isArray(extra.attachmentIds) && extra.attachmentIds.length > 0) {
 		json.attachmentIds = extra.attachmentIds;
 	}
+	// Режим чата: read или plan. Без поля ядро отвечает в режиме, сохранённом в сессии
+	if (typeof extra.mode === 'string') {
+		json.mode = extra.mode;
+	}
 	return request_Api('POST', `/sessions/${encode_Segment(sessionId)}/messages`, { json });
 }
 

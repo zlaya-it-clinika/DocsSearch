@@ -23,8 +23,10 @@ type BlankField struct {
 }
 
 type Blank struct {
-	ID     string
-	Title  string
+	ID    string
+	Title string
+	// Название модуля для списков: из свойств файла (dc:title), иначе заголовок
+	Name   string
 	Body   string
 	Fields []BlankField
 	tokens map[string]bool
@@ -40,6 +42,7 @@ func Parse_BlankText(fileName, plain string) (Blank, error) {
 	return Blank{
 		ID:     id,
 		Title:  title,
+		Name:   title,
 		Body:   strings.TrimSpace(body),
 		Fields: fields,
 		tokens: tokens_Of(title),

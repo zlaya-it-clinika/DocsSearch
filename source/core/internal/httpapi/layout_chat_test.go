@@ -39,7 +39,7 @@ func TestLayoutDialogInStubChat(t *testing.T) {
 	if question := postMessage(t, handler, employeeToken, sessionID, "Как составить служебную записку?"); question.Kind == texts.KindTemplateField {
 		t.Fatalf("question started a layout %+v", question)
 	}
-	first := postMessage(t, handler, employeeToken, sessionID, "Подготовь служебную записку о замене ноутбука")
+	first := postModeMessage(t, handler, employeeToken, sessionID, "Подготовь служебную записку о замене ноутбука", texts.ChatModePlan)
 	if first.Kind != texts.KindTemplateField || first.Template == nil || first.Template.Field != texts.LayoutFieldAddressee || !strings.Contains(first.Text, "2. Руководитель ИТ-отдела Иванов И.И.") {
 		t.Fatalf("first %+v", first)
 	}

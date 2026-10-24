@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"docssearch/core/internal/blank"
 	"docssearch/core/internal/layout"
@@ -17,61 +16,46 @@ import (
 // о чем она молчит - по ГОСТ Р 7.0.97-2025 (профили internal/layout/formats).
 // Реквизиты организации (должностные лица, герб, штамп) - из вкладки «Организация»
 
-// Состояние шаблона в сессии: бланк модуля и макет. Ключ layout не мешает старым сессиям с одним бланком
+// Состояние шаблона в сессии: бланк модуля, макет и список документов на выбор (режим «План»).
+// Ключи layout и choice не мешают старым сессиям с одним бланком
 type sessionTemplateState struct {
 	blank.FillState
 	Layout *layout.State `json:"layout,omitempty"`
+	Choice *planChoice   `json:"choice,omitempty"`
 }
 
 func encode_SessionState(session *sessionRecord) []byte {
-	if session.layoutFill.LayoutID == "" {
+	if session.layoutFill.LayoutID == "" && session.planChoice == nil {
 		return encode_FillState(session.blankFill)
 	}
-	raw, err := json.Marshal(sessionTemplateState{FillState: session.blankFill, Layout: &session.layoutFill})
+	state := sessionTemplateState{FillState: session.blankFill, Choice: session.planChoice}
+	if session.layoutFill.LayoutID != "" {
+		state.Layout = &session.layoutFill
+	}
+	raw, err := json.Marshal(state)
 	if err != nil {
 		return []byte("{}")
 	}
 	return raw
 }
 
-func decode_LayoutState(raw []byte) layout.State {
+func decode_TemplateState(raw []byte) sessionTemplateState {
 	var state sessionTemplateState
-	if len(raw) == 0 || json.Unmarshal(raw, &state) != nil || state.Layout == nil {
-		return layout.State{}
+	if len(raw) > 0 && json.Unmarshal(raw, &state) != nil {
+		return sessionTemplateState{}
 	}
-	return *state.Layout
+	return state
 }
 
-// Шаг макета, если реплика к нему относится: макет уже готовится или это просьба подготовить документ.
-// Пока заполняется бланк модуля, макет не перехватывает ответы. loadOrganization вызывается, только если реплика - про макет
-func advance_LayoutTurn(session *sessionRecord, text string, loadOrganization func() (layout.Organization, error), format layout.Format, chatter layout.Chatter, now time.Time) (layout.Step, bool, error) {
-	if session.blankFill.BlankID != "" {
-		return layout.Step{}, false, nil
+func decode_LayoutState(raw []byte) layout.State {
+	if state := decode_TemplateState(raw); state.Layout != nil {
+		return *state.Layout
 	}
-	var step layout.Step
-	if session.layoutFill.LayoutID == "" {
-		matched, ok := layout.Match_Request(text)
-		if !ok {
-			return layout.Step{}, false, nil
-		}
-		organization, err := loadOrganization()
-		if err != nil {
-			return layout.Step{}, false, err
-		}
-		step = layout.Start_Layout(matched, text, organization, format, chatter, now)
-	} else {
-		organization, err := loadOrganization()
-		if err != nil {
-			return layout.Step{}, false, err
-		}
-		step = layout.Advance_Layout(session.layoutFill, text, organization, format, chatter, now)
-	}
-	session.layoutFill = step.State
-	session.templateStep = templateStepIdle
-	if step.State.LayoutID != "" {
-		session.templateStep = templateStepAsked
-	}
-	return step, true, nil
+	return layout.State{}
+}
+
+func decode_PlanChoice(raw []byte) *planChoice {
+	return decode_TemplateState(raw).Choice
 }
 
 func reply_FromLayout(step layout.Step) assistantReply {

@@ -85,6 +85,10 @@ type sessionRecord struct {
 	draftAttachmentID string
 	// Процесс, выбранный в чате. Пустая строка - все процессы
 	processID string
+	// Режим чата: read или plan. Пусто - read
+	chatMode string
+	// Список документов на выбор в режиме «План»
+	planChoice *planChoice
 }
 
 type attachmentRecord struct {
@@ -141,6 +145,8 @@ type assistantReply struct {
 	Draft            *draftState     `json:"draft,omitempty"`
 	// Где искали ответ: процесс, выбранный в чате. Пустой объект - все процессы
 	Process *processRef `json:"process,omitempty"`
+	// Подсказка под ответом: в режиме «Чтение» документы не готовятся
+	Hint string `json:"hint,omitempty"`
 }
 
 type processRef struct {
@@ -605,7 +611,8 @@ func (stubStore *stub) serve_SessionHistory(responseWriter http.ResponseWriter, 
 		SessionID string `json:"sessionId"`
 		ProcessID string `json:"processId"`
 		Messages  []any  `json:"messages"`
-	}{SessionID: session.id, ProcessID: stubStore.saved_SessionProcess(session), Messages: session.messages})
+		Mode      string `json:"mode"`
+	}{SessionID: session.id, ProcessID: stubStore.saved_SessionProcess(session), Messages: session.messages, Mode: saved_ChatMode(session.chatMode)})
 }
 
 func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
@@ -614,6 +621,8 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
 		ProcessID     *string  `json:"processId"`
 		AttachmentIDs []string `json:"attachmentIds"`
+		// nil - режим, сохраненный в сессии: read или plan
+		Mode *string `json:"mode"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
@@ -642,22 +651,38 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	if body.ProcessID != nil {
 		session.processID = processID
 	}
+	mode, modeOK := resolve_ChatMode(body.Mode, session.chatMode)
+	if !modeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	session.chatMode = mode
 	var reply assistantReply
 	var step blank.Step
 	var turnAttachments []messageAttachment
-	handled := false
-	layoutHandled := false
+	// «План»: документ по просьбе. В заглушке нет модели: вид документа - по словам или из списка
+	var plan planResult
+	if mode == texts.ChatModePlan && auth.Has_Permission(permissions, texts.PermissionTemplatesUse) && auth.Has_Permission(permissions, texts.PermissionChatUse) {
+		if len(body.AttachmentIDs) == 0 {
+			plan, _ = advance_PlanTurn(session, body.Text, func() (layout.Organization, error) {
+				return stubStore.organization.layout_Snapshot(), nil
+			}, stubStore.layoutFormat, nil, time.Now())
+		}
+	} else {
+		clear_DocumentStates(session)
+	}
+	layoutHandled := plan.Layout != nil
 	var layoutStep layout.Step
-	if auth.Has_Permission(permissions, texts.PermissionTemplatesUse) && auth.Has_Permission(permissions, texts.PermissionChatUse) {
-		// В заглушке нет модели: макет собирается из ответов как есть
-		layoutStep, layoutHandled, _ = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
-			return stubStore.organization.layout_Snapshot(), nil
-		}, stubStore.layoutFormat, nil, time.Now())
-	}
-	if !layoutHandled && auth.Has_Permission(permissions, texts.PermissionTemplatesUse) {
-		step, handled = blank.Advance_Blank(session.blankFill, body.Text)
-	}
 	if layoutHandled {
+		layoutStep = *plan.Layout
+	}
+	handled := plan.Blank != nil
+	if handled {
+		step = *plan.Blank
+	}
+	if plan.Reply != nil {
+		reply = *plan.Reply
+	} else if layoutHandled {
 		reply = reply_FromLayout(layoutStep)
 		if layoutStep.Ready && len(layoutStep.Docx) > 0 {
 			reply.Template.DraftLink = draft_FileLink(stubStore.save_DraftFile(record.id, layoutStep.FileName, layoutStep.Docx))
@@ -703,10 +728,13 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		draftID := stubStore.save_DraftFile(record.id, step.BlankID+".docx", step.DraftDocx)
 		reply.Template.DraftLink = draft_FileLink(draftID)
 	}
-	reply = stubStore.apply_StubProcess(reply, processID)
-	if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
-		reply = reply_WithContacts(reply, stubStore.lookup_Contacts(record, body.Text))
+	if plan.Reply == nil {
+		reply = stubStore.apply_StubProcess(reply, processID)
+		if reply.Kind == texts.KindAnswer || reply.Kind == texts.KindFallback {
+			reply = reply_WithContacts(reply, stubStore.lookup_Contacts(record, body.Text))
+		}
 	}
+	reply = apply_ModeHint(reply, mode, body.Text)
 	if session.title == "" {
 		session.title = build_SessionTitle(body.Text)
 	}

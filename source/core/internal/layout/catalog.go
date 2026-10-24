@@ -30,8 +30,22 @@ func Find_Layout(id string) (texts.LayoutInfo, bool) {
 
 // Просьба подготовить документ: вид документа и глагол просьбы, но не вопрос «как оформить ...?»
 func Match_Request(text string) (texts.LayoutInfo, bool) {
+	if !Check_IsRequest(text) {
+		return texts.LayoutInfo{}, false
+	}
+	return Match_Document(text)
+}
+
+// Глагол просьбы («подготовь», «напиши», «нужна»), но не вопрос «как оформить ...?»
+func Check_IsRequest(text string) bool {
 	words := split_Words(text)
-	if len(words) == 0 || !check_IsRequest(text, words) {
+	return len(words) > 0 && check_IsRequest(text, words)
+}
+
+// Вид документа, названный в реплике, без проверки просьбы: в режиме «План» каждая реплика - про документ
+func Match_Document(text string) (texts.LayoutInfo, bool) {
+	words := split_Words(text)
+	if len(words) == 0 {
 		return texts.LayoutInfo{}, false
 	}
 	// Закупка - тоже служебная записка, поэтому проверяется раньше: «служебка на закупку ноутбуков»
@@ -86,7 +100,8 @@ func check_IsRequest(text string, words []string) bool {
 	return false
 }
 
-func check_IsCancel(text string) bool {
+// «отмена», «стоп»: остановить подготовку документа
+func Check_IsCancel(text string) bool {
 	words := split_Words(text)
 	if len(words) == 0 || len(words) > 3 {
 		return false

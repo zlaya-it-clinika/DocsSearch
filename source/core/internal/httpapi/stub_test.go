@@ -70,8 +70,8 @@ func TestStubDialogDocumentsRolesAndAudit(t *testing.T) {
 	}
 
 	templateSession := createSession(t, handler, employeeToken)
-	// Служебной записки нет среди бланков модулей: ее готовит макет по ГОСТ, отмена возвращает к обычному чату
-	noteLayout := postMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки")
+	// Служебной записки нет среди бланков модулей: в режиме «План» ее готовит макет, отмена возвращает к обычному чату
+	noteLayout := postModeMessage(t, handler, employeeToken, templateSession, "Нужен шаблон служебной записки", texts.ChatModePlan)
 	if noteLayout.Kind != texts.KindTemplateField || noteLayout.Template == nil || noteLayout.Template.ID != "service-note" || len(noteLayout.Citations) != 0 {
 		t.Fatalf("note layout %+v", noteLayout)
 	}
@@ -486,6 +486,16 @@ func postMessage(t *testing.T, handler http.Handler, token, sessionID, text stri
 	return decodeJSON[assistantReply](t, response)
 }
 
+// Сообщение со сменой режима чата: read или plan. Режим сохраняется в сессии для следующих сообщений
+func postModeMessage(t *testing.T, handler http.Handler, token, sessionID, text, mode string) assistantReply {
+	t.Helper()
+	response := doJSON(t, handler, http.MethodPost, "/sessions/"+sessionID+"/messages", token, map[string]string{"text": text, "mode": mode})
+	if response.Code != http.StatusOK {
+		t.Fatalf("message status %d body %s", response.Code, response.Body.String())
+	}
+	return decodeJSON[assistantReply](t, response)
+}
+
 func listDocuments(t *testing.T, handler http.Handler, token string) []documentResponse {
 	t.Helper()
 	return listDocumentPage(t, handler, token, "").Documents
@@ -528,11 +538,16 @@ func TestStubPrepareDocumentListsRequisites(t *testing.T) {
 	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
 	sessionID := createSession(t, handler, employeeToken)
 	answer := postMessage(t, handler, employeeToken, sessionID, "Как подготовить документ?")
-	if answer.Kind != texts.KindFallback || answer.Text != texts.FallbackText || len(answer.Citations) != 0 {
+	if answer.Kind != texts.KindFallback || answer.Text != texts.FallbackText || len(answer.Citations) != 0 || answer.Hint != "" {
 		t.Fatalf("prepare %+v", answer)
 	}
-	blank := postMessage(t, handler, employeeToken, sessionID, "Как подготовить модуль распоряжения о создании рабочей группы")
-	if blank.Kind != texts.KindTemplateField {
+	// «Чтение» бланк не начинает, но подсказывает режим «План»
+	read := postMessage(t, handler, employeeToken, sessionID, "Как подготовить модуль распоряжения о создании рабочей группы")
+	if read.Kind != texts.KindFallback || read.Hint != texts.ChatModePlanHint {
+		t.Fatalf("read mode %+v", read)
+	}
+	blank := postModeMessage(t, handler, employeeToken, sessionID, "Как подготовить модуль распоряжения о создании рабочей группы", texts.ChatModePlan)
+	if blank.Kind != texts.KindTemplateField || blank.Hint != "" {
 		t.Fatalf("blank wins %+v", blank)
 	}
 }

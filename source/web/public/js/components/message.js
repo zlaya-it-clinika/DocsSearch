@@ -14,6 +14,8 @@ export const MessageKinds = Object.freeze({
 	fallback: 'fallback',
 	templateField: 'template_field',
 	templateReady: 'template_ready',
+	// Режим «План» не узнал вид документа и предлагает список
+	templateChoice: 'template_choice',
 	accessDenied: 'access_denied',
 	// Локальные виды: проверка черновика не входит в историю сессии ядра
 	draftRequest: 'draft_request',
@@ -27,6 +29,7 @@ const kindLabels = {
 	[MessageKinds.accessDenied]: ChatTexts.kindAccessDenied,
 	[MessageKinds.templateField]: ChatTexts.kindTemplateField,
 	[MessageKinds.templateReady]: ChatTexts.kindTemplateReady,
+	[MessageKinds.templateChoice]: ChatTexts.kindTemplateChoice,
 	[MessageKinds.draftCheck]: ChatTexts.kindDraftCheck,
 	[MessageKinds.draftRevision]: ChatTexts.kindDraftRevision,
 };
@@ -217,6 +220,8 @@ function render_AssistantBody(message, handlers) {
 			return render_TemplateFieldBody(message);
 		case MessageKinds.templateReady:
 			return render_TemplateReadyBody(message);
+		case MessageKinds.templateChoice:
+			return [create_Callout('file', message.text, ChatTexts.templateChoiceHint)];
 		case MessageKinds.draftCheck:
 			return render_DraftCheckBody(message);
 		case MessageKinds.draftRevision:
@@ -262,11 +267,19 @@ function render_SearchScope(message) {
 	]);
 }
 
+// Подсказка ядра под ответом: например, что документы готовятся в режиме «План»
+function render_Hint(hint) {
+	if (typeof hint !== 'string' || hint.trim() === '') {
+		return null;
+	}
+	return create_Element('div', { className: 'message-hint' }, [create_Icon('info', 'icon-sm'), create_Element('span', { text: hint })]);
+}
+
 function render_AssistantMessage(message, handlers) {
 	const header = create_AssistantHeader(message.kind);
 	return create_Element('div', { className: 'message message-assistant', dataset: { kind: message.kind ?? '' } }, [
 		header,
-		create_Element('div', { className: 'message-body' }, [...render_AssistantBody(message, handlers), render_SearchScope(message)]),
+		create_Element('div', { className: 'message-body' }, [...render_AssistantBody(message, handlers), render_SearchScope(message), render_Hint(message.hint)]),
 		create_Element('div', { className: 'message-actions' }, [create_CopyButton(build_AssistantCopyText(message))]),
 	]);
 }

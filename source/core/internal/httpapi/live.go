@@ -408,11 +408,17 @@ func (api *liveAPI) serve_SessionHistory(responseWriter http.ResponseWriter, req
 		write_LiveError(responseWriter, err)
 		return
 	}
+	savedMode, err := api.store.Read_SessionMode(request.Context(), request.PathValue("sessionId"))
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
 	write_JSONResponse(responseWriter, http.StatusOK, struct {
 		SessionID string            `json:"sessionId"`
 		ProcessID string            `json:"processId"`
+		Mode      string            `json:"mode"`
 		Messages  []json.RawMessage `json:"messages"`
-	}{SessionID: request.PathValue("sessionId"), ProcessID: processID, Messages: rawMessages})
+	}{SessionID: request.PathValue("sessionId"), ProcessID: processID, Mode: saved_ChatMode(savedMode), Messages: rawMessages})
 }
 
 func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, request *http.Request) {
@@ -421,6 +427,8 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		// nil - процесс, сохранённый в сессии, пустая строка - все процессы
 		ProcessID     *string  `json:"processId"`
 		AttachmentIDs []string `json:"attachmentIds"`
+		// nil - режим, сохраненный в сессии: read или plan
+		Mode *string `json:"mode"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil || strings.TrimSpace(body.Text) == "" {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
@@ -453,33 +461,49 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		return
 	}
 	replyPrompt := replyPrompts{Select: prompts.Select, Answer: prompts.Answer, Clarify: prompts.Clarify}.with_Brief(brief)
-	session := &sessionRecord{blankFill: decode_FillState(templateState), layoutFill: decode_LayoutState(templateState)}
+	savedMode, err := api.store.Read_SessionMode(request.Context(), request.PathValue("sessionId"))
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	mode, modeOK := resolve_ChatMode(body.Mode, savedMode)
+	if !modeOK {
+		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
+		return
+	}
+	session := &sessionRecord{blankFill: decode_FillState(templateState), layoutFill: decode_LayoutState(templateState), planChoice: decode_PlanChoice(templateState)}
 	var reply assistantReply
 	var documents []shownDocument
 	var turnAttachments []messageAttachment
-	// Макет документа: продолжение начатого или новая просьба подготовить документ
-	var layoutStep layout.Step
-	layoutHandled := false
-	if account.Has(texts.PermissionTemplatesUse) && account.Has(texts.PermissionChatUse) {
-		var layoutError error
-		layoutStep, layoutHandled, layoutError = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
-			return api.load_LayoutOrganization(request.Context(), token)
-		}, api.layoutFormat, api.chatter, time.Now())
-		if layoutError != nil {
-			write_LiveError(responseWriter, layoutError)
-			return
+	// «План»: документ по просьбе сотрудника. «Чтение» и сотрудник без флага шаблонов - только база знаний.
+	// С вложениями черновика реплика - правка черновика, а не новый документ
+	var plan planResult
+	if mode == texts.ChatModePlan && account.Has(texts.PermissionTemplatesUse) && account.Has(texts.PermissionChatUse) {
+		if len(body.AttachmentIDs) == 0 {
+			var planError error
+			plan, planError = advance_PlanTurn(session, body.Text, func() (layout.Organization, error) {
+				return api.load_LayoutOrganization(request.Context(), token)
+			}, api.layoutFormat, api.chatter, time.Now())
+			if planError != nil {
+				write_LiveError(responseWriter, planError)
+				return
+			}
 		}
+	} else {
+		clear_DocumentStates(session)
 	}
-	step, handled := blank.Step{}, false
-	if !layoutHandled {
-		step, handled = blank.Advance_Blank(session.blankFill, body.Text)
+	layoutHandled := plan.Layout != nil
+	var layoutStep layout.Step
+	if layoutHandled {
+		layoutStep = *plan.Layout
 	}
-	if handled && !account.Has(texts.PermissionTemplatesUse) {
-		handled = false
+	step, handled := blank.Step{}, plan.Blank != nil
+	if handled {
+		step = *plan.Blank
 	}
 	var source livestore.RevisionSource
 	revising := false
-	if !handled && !layoutHandled {
+	if !handled && !layoutHandled && plan.Reply == nil {
 		var sourceError error
 		source, revising, sourceError = api.store.Find_RevisionSource(request.Context(), request.PathValue("sessionId"), body.AttachmentIDs)
 		if sourceError != nil {
@@ -487,7 +511,10 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			return
 		}
 	}
-	if layoutHandled {
+	if plan.Reply != nil {
+		reply = *plan.Reply
+		documents = []shownDocument{}
+	} else if layoutHandled {
 		reply = reply_FromLayout(layoutStep)
 		documents = []shownDocument{}
 		if layoutStep.Ready && len(layoutStep.Docx) > 0 {
@@ -591,6 +618,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			reply = reply_WithContacts(reply, contactList)
 		}
 	}
+	reply = apply_ModeHint(reply, mode, body.Text)
 	userBody, err := json.Marshal(userLine{Role: "user", Text: body.Text, Attachments: turnAttachments})
 	if err != nil {
 		write_LiveError(responseWriter, err)
@@ -618,6 +646,12 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 	}
 	if body.ProcessID != nil {
 		if err := api.store.Save_SessionProcess(request.Context(), request.PathValue("sessionId"), processID); err != nil {
+			write_LiveError(responseWriter, err)
+			return
+		}
+	}
+	if body.Mode != nil {
+		if err := api.store.Save_SessionMode(request.Context(), request.PathValue("sessionId"), mode); err != nil {
 			write_LiveError(responseWriter, err)
 			return
 		}

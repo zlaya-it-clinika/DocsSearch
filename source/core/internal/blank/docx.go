@@ -142,3 +142,29 @@ func escape_XMLText(value string) string {
 	_ = xml.EscapeText(&buf, []byte(value))
 	return buf.String()
 }
+
+// Название из свойств документа (docProps/core.xml, dc:title): «Модуль распоряжения о создании рабочей группы».
+// Заголовок в тексте модуля содержит пропуски и номера примечаний, для списков он не годится
+func read_DocxTitle(body []byte) string {
+	archive, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return ""
+	}
+	for _, file := range archive.File {
+		if file.Name != "docProps/core.xml" {
+			continue
+		}
+		raw, err := read_ZipFile(file)
+		if err != nil {
+			return ""
+		}
+		var properties struct {
+			Title string `xml:"title"`
+		}
+		if xml.Unmarshal(raw, &properties) != nil {
+			return ""
+		}
+		return strings.Join(strings.Fields(properties.Title), " ")
+	}
+	return ""
+}

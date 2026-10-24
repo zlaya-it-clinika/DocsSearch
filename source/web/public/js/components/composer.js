@@ -16,7 +16,9 @@ export function create_Composer({ onSubmit, allowCheck = true, allowAssist = fal
 	let attachedFile = null;
 	let attachMode = allowCheck ? 'check' : 'assist';
 	let busy = false;
-	let basePlaceholder = ChatTexts.placeholder;
+	// Подсказка пустого поля: своя у каждого режима чата
+	let idlePlaceholder = ChatTexts.placeholder;
+	let basePlaceholder = idlePlaceholder;
 
 	const textarea = create_Element('textarea', {
 		className: 'composer-input',
@@ -157,7 +159,23 @@ export function create_Composer({ onSubmit, allowCheck = true, allowAssist = fal
 
 		// Подсказка меняется, когда ассистент спрашивает поле бланка
 		set_FieldPrompt(fieldLabel) {
-			basePlaceholder = fieldLabel ? format_Text(ChatTexts.placeholderField, { field: fieldLabel }) : ChatTexts.placeholder;
+			basePlaceholder = fieldLabel ? format_Text(ChatTexts.placeholderField, { field: fieldLabel }) : idlePlaceholder;
+			update_Placeholder();
+		},
+
+		// Готовая подсказка ответа, например номер или название документа из списка. Пусто - подсказка режима
+		set_AnswerPrompt(text) {
+			basePlaceholder = text || idlePlaceholder;
+			update_Placeholder();
+		},
+
+		// Подсказка пустого поля для режима чата. Подсказку поля бланка не перебивает
+		set_IdlePlaceholder(text) {
+			const wasIdle = basePlaceholder === idlePlaceholder;
+			idlePlaceholder = text || ChatTexts.placeholder;
+			if (wasIdle) {
+				basePlaceholder = idlePlaceholder;
+			}
 			update_Placeholder();
 		},
 

@@ -38,6 +38,24 @@ func Match_Blank(text string) (Blank, bool) {
 	return match_Blank(blanks, text)
 }
 
+// Бланк по коду: первый вопрос. В режиме «План» вид документа выбирают по списку или модель
+func Start_Blank(blankID string) (Step, bool) {
+	blanks, err := Catalog()
+	if err != nil {
+		return Step{}, false
+	}
+	item, found := find_Blank(blanks, blankID)
+	if !found {
+		return Step{}, false
+	}
+	state := FillState{BlankID: item.ID}
+	field, hasField := first_EmptyField(item, state)
+	if !hasField {
+		return finish_Blank(item, state), true
+	}
+	return step_ForField(item, state, field), true
+}
+
 func Advance_Blank(state FillState, text string) (Step, bool) {
 	blanks, err := Catalog()
 	if err != nil {
