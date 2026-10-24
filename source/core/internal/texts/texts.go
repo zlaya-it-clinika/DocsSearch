@@ -279,6 +279,14 @@ const (
 	LiveParagraphLabel = "Пункт"
 	LiveAppendixLabel  = "Приложение"
 
+	// Добавляется к промпту ответа любой темы: промпт темы хранится в базе и мог быть переписан в админке,
+	// а отказ меткой - часть контракта ядра. Не слово «нет»: оно же честный ответ на «можно ли»
+	LiveAnswerRefusalRule  = "Если в переданных фрагментах нет ответа на вопрос, верни только метку НЕТ_ОТВЕТА. На вопрос «можно ли» отвечай по сути, словами да или нет с пояснением."
+	LiveAnswerNoAnswerMark = "НЕТ_ОТВЕТА"
+
+	// Ответ модели с числом, которого нет во фрагментах, заменяется ближайшим пунктом дословно
+	LiveUnsupportedIntro = "Точного ответа сформулировать не удалось. Ближайший по смыслу пункт:"
+
 	// «Карта» выбранного процесса: добавляется к подсказкам модели, чтобы она знала, что есть в теме
 	LiveProcessLabel    = "Тема поиска"
 	LiveProcessContents = "Документы темы"
@@ -295,6 +303,20 @@ const (
 	EvalRequestFailed   = "Запрос к живому ядру не выполнен."
 	EvalPointsLine      = "верных пунктов: %d из %d\n"
 	EvalFallbackLine    = "fallback: %d из %d\n"
+	EvalFactsLine       = "ответов с нужными фактами: %d из %d\n"
+	EvalRefusalLine     = "верных отказов: %d из %d\n"
+	EvalFalseAnswerLine = "ответов вместо отказа: %d\n"
+	EvalMissedLine      = "отказов на вопросы из базы: %d из %d\n"
+	EvalUnsupportedLine = "ответов с числами не из источников: %d из %d\n"
+	EvalQuoteLine       = "ответов заменено цитатой пункта: %d\n"
+	EvalHonestLine      = "ответов без выдумки: %d из %d (%d%%)\n"
+	EvalQuestionLine    = "%s: %s%s\n"
+	EvalMarkPoint       = " [не тот пункт]"
+	EvalMarkFacts       = " [нет нужного факта]"
+	EvalMarkFalseAnswer = " [ответ вместо отказа]"
+	EvalMarkMissed      = " [отказ на вопрос из базы]"
+	EvalMarkQuote       = " [цитата пункта]"
+	EvalMarkUnsupported = " [числа не из источников: %s]"
 )
 
 type PermissionInfo struct {

@@ -92,3 +92,21 @@ func build_Docx(t *testing.T, lines ...string) []byte {
 	}
 	return buffer.Bytes()
 }
+
+func TestJoin_PdfNumberLinesRestoresParagraphs(t *testing.T) {
+	plain := "сроки работы.\n6.\n7\n. Срочные документы исполняются.\n6.1\n5\n. Снятие с контроля.\n2.1\n1.\n \nОбработка без шифрования.\n15\nКонец страницы.\n3.3. Целая строка."
+	joined := join_PdfNumberLines(plain)
+	want := "сроки работы.\n6.7. Срочные документы исполняются.\n6.15. Снятие с контроля.\n2.11. Обработка без шифрования.\n15\nКонец страницы.\n3.3. Целая строка."
+	if joined != want {
+		t.Fatalf("joined %q", joined)
+	}
+	paragraphs := []string{}
+	for _, piece := range Split_DocumentText(joined) {
+		if piece.Paragraph != "" {
+			paragraphs = append(paragraphs, piece.Paragraph)
+		}
+	}
+	if strings.Join(paragraphs, " ") != "6.7 6.15 2.11 3.3" {
+		t.Fatalf("paragraphs %v", paragraphs)
+	}
+}

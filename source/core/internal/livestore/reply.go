@@ -56,7 +56,8 @@ func similarity_OfChunk(chunk SimilarChunk) float64 {
 }
 
 // Нет видимого фрагмента с близостью от 0.4. Если близкий фрагмент есть только в закрытом общем документе - access_denied.
-// Два близких видимых фрагмента из разных документов, разрыв близости меньше 0.05 - clarify.
+// Два близких видимых фрагмента из разных документов, разрыв близости меньше 0.05 - кандидат в clarify.
+// Уточнение задается, только если модель на шаге выбора взяла фрагменты разных документов, иначе это answer.
 // Иначе answer по видимым фрагментам, которые прошли порог.
 func Choose_LiveReplyKind(visible []SimilarChunk, closed []SimilarChunk) (string, []SimilarChunk) {
 	selected := make([]SimilarChunk, 0, len(visible))

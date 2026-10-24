@@ -48,7 +48,7 @@ func (store *LiveStore) Index_UploadedDocument(ctx context.Context, token string
 	pieces := chunk.Split_DocumentText(plain)
 	contents := make([]string, 0, len(pieces))
 	for _, piece := range pieces {
-		contents = append(contents, piece.Content)
+		contents = append(contents, chunk_EmbedText(input.Title, piece.Section, piece.Paragraph, piece.Appendix, piece.Content))
 	}
 	vectors, err := store.embed_Texts(contents)
 	if err != nil {
@@ -124,6 +124,27 @@ func upload_ProcessID(processID string) string {
 		return texts.ProcessDocuments
 	}
 	return processID
+}
+
+// Текст для эмбеддинга фрагмента: «адрес» (документ, раздел, пункт, приложение) и сам текст.
+// По адресу вопрос находит нужный пункт чаще, а вопрос не по теме уходит дальше от документов.
+// В базе хранится только текст фрагмента, адрес нужен лишь для вектора
+func chunk_EmbedText(title, section, paragraph, appendix, content string) string {
+	var builder strings.Builder
+	builder.WriteString(strings.TrimSpace(title))
+	builder.WriteString(".")
+	for _, part := range []struct{ label, value string }{
+		{texts.LiveSectionLabel, section},
+		{texts.LiveParagraphLabel, paragraph},
+		{texts.LiveAppendixLabel, appendix},
+	} {
+		if strings.TrimSpace(part.value) != "" {
+			builder.WriteString(" " + part.label + " " + strings.TrimSpace(part.value) + ".")
+		}
+	}
+	builder.WriteString("\n")
+	builder.WriteString(content)
+	return builder.String()
 }
 
 func (store *LiveStore) embed_Texts(contents []string) ([][]float32, error) {

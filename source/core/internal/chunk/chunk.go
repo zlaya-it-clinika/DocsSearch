@@ -21,6 +21,8 @@ var (
 	paragraphHeading = regexp.MustCompile(`(?i)^\s*пункт\s+(\S+)`)
 	appendixHeading  = regexp.MustCompile(`(?i)^\s*приложение\s+(\S+)`)
 	numberedHeading  = regexp.MustCompile(`^\s*(\d+(?:\.\d+)+)\b`)
+	// Обрывок номера пункта на отдельной строке PDF: «6.», «7», «6.1», «15»
+	numberFragment = regexp.MustCompile(`^\d+(?:\.\d*)*$`)
 )
 
 var ErrUnsupportedFile = errors.New("unsupported file")
@@ -92,7 +94,45 @@ func extract_PdfText(body []byte) (string, error) {
 		builder.WriteString(plain)
 		builder.WriteByte('\n')
 	}
-	return builder.String(), nil
+	return join_PdfNumberLines(builder.String()), nil
+}
+
+// PDF отдает номер пункта кусками на разных строках: «6.1» / «5» / «. Снятие...» вместо «6.15. Снятие...».
+// Без склейки пункт 6.15 попадает в 6.1, а 6.7 - в текст соседнего пункта.
+// Склейка начинается только с обрывка с точкой, чтобы не трогать номера страниц
+func join_PdfNumberLines(plain string) string {
+	lines := strings.Split(plain, "\n")
+	joined := make([]string, 0, len(lines))
+	for index := 0; index < len(lines); index++ {
+		first := strings.TrimSpace(lines[index])
+		if !numberFragment.MatchString(first) || !strings.Contains(first, ".") {
+			joined = append(joined, lines[index])
+			continue
+		}
+		number := first
+		next := index + 1
+		for next < len(lines) {
+			fragment := strings.TrimSpace(lines[next])
+			if fragment != "" && !numberFragment.MatchString(fragment) {
+				break
+			}
+			number += fragment
+			next++
+		}
+		if next == len(lines) {
+			joined = append(joined, number)
+			index = next - 1
+			continue
+		}
+		text := strings.TrimSpace(lines[next])
+		if strings.HasPrefix(text, ".") {
+			joined = append(joined, number+text)
+		} else {
+			joined = append(joined, number+" "+text)
+		}
+		index = next
+	}
+	return strings.Join(joined, "\n")
 }
 
 func extract_DocxText(body []byte) (string, error) {

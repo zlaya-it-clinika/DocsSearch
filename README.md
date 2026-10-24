@@ -18,11 +18,16 @@ flowchart TD
   search --> gate{Результат}
   gate -->|только закрытые| denied[access_denied]
   gate -->|нет подходящих| plainFallback
-  gate -->|два документа| clarify[clarify]
   gate -->|есть видимые| select[Модель выбирает номера]
   select -->|пусто| plainFallback
-  select -->|номера| answer[answer по фрагментам]
+  select -->|разные документы при близких фрагментах| clarify[clarify]
+  select -->|номера| modelAnswer[Модель отвечает по фрагментам]
+  modelAnswer -->|метка НЕТ_ОТВЕТА| plainFallback
+  modelAnswer -->|число не из фрагментов| quote[answer: ближайший пункт дословно]
+  modelAnswer -->|числа подтверждены| answer[answer по фрагментам]
 ```
+
+Вектор фрагмента строится по адресу (документ, раздел, пункт) и тексту. Проверка качества: из `source/core` команда `go run ./cmd/eval`, в боевом режиме с переменными `EVAL_LOGIN` и `EVAL_PASSWORD` сотрудника.
 
 У `answer` и `fallback` есть контакты, если в базе загружен справочник подразделений. У `clarify`, `access_denied`, бланка и правки черновика этого блока нет.
 

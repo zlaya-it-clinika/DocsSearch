@@ -92,7 +92,7 @@ func TestBuild_LiveAssistantReplyKinds(t *testing.T) {
 	if answerErr != nil || chatter.calls != 2 || answer.Kind != texts.KindAnswer || answer.Text != "Ответ по фрагменту." {
 		t.Fatalf("answer %+v %v calls %d", answer, answerErr, chatter.calls)
 	}
-	if chatter.systems[0] != texts.LiveSelectPrompt || chatter.systems[1] != texts.LiveAnswerPrompt {
+	if chatter.systems[0] != texts.LiveSelectPrompt || chatter.systems[1] != answer_System(texts.LiveAnswerPrompt) {
 		t.Fatalf("prompts %+v", chatter.systems)
 	}
 	if answer.RelevancePercent != 80 || len(answer.Citations) != 1 || answer.Citations[0].DocumentID != "doc-open" || answer.Citations[0].Scope != texts.ScopeGlobal || answer.Citations[0].Quote != "видимый фрагмент" {
@@ -131,13 +131,56 @@ func TestGroundedSelectionUsesOnlyChosenFragments(t *testing.T) {
 	}
 }
 
+func TestBuild_LiveAssistantReplyClarifiesOnlyAcrossDocuments(t *testing.T) {
+	instruction := livestore.SimilarChunk{DocumentID: "doc-instruction", Paragraph: "7.1", Content: "Исходящий регистрируется после подписания.", Distance: 0.28}
+	guide := livestore.SimilarChunk{DocumentID: "doc-guide", Paragraph: "5.2", Content: "Модульный документ регистрируется в ИИС ДО.", Distance: 0.29}
+
+	single := &scriptedChat{replies: []string{"1", "После подписания."}}
+	answer, _, err := build_LiveAssistantReply(single, "Когда регистрируется исходящий?", nil, []livestore.SimilarChunk{instruction, guide}, nil, defaultReplyPrompts())
+	if err != nil || answer.Kind != texts.KindAnswer || len(answer.Citations) != 1 || answer.Citations[0].Paragraph != "7.1" {
+		t.Fatalf("single document %+v %v", answer, err)
+	}
+	if len(single.systems) != 2 || single.systems[0] != texts.LiveSelectPrompt || single.systems[1] != answer_System(texts.LiveAnswerPrompt) {
+		t.Fatalf("single prompts %+v", single.systems)
+	}
+
+	both := &scriptedChat{replies: []string{"1, 2", "О каком документе речь?"}}
+	clarify, docs, clarifyErr := build_LiveAssistantReply(both, "Когда регистрируется?", nil, []livestore.SimilarChunk{instruction, guide}, nil, defaultReplyPrompts())
+	if clarifyErr != nil || clarify.Kind != texts.KindClarify || clarify.Text != "О каком документе речь?" || len(clarify.Citations) != 0 || len(docs) != 0 {
+		t.Fatalf("both documents %+v %v", clarify, clarifyErr)
+	}
+	if len(both.systems) != 2 || both.systems[1] != texts.LiveClarifyPrompt {
+		t.Fatalf("clarify prompts %+v", both.systems)
+	}
+}
+
+func TestBuild_LiveAssistantReplyReplacesUnsupportedNumbers(t *testing.T) {
+	first := livestore.SimilarChunk{DocumentID: "doc-a", Title: "Инструкция", Paragraph: "6.7", Content: "Срочный документ исполняется в течение 3 (трех) рабочих дней.", Distance: 0.2}
+	second := livestore.SimilarChunk{DocumentID: "doc-b", Paragraph: "6.6", Content: "Обращения граждан - 30 календарных дней.", Distance: 0.3}
+
+	invented := &scriptedChat{replies: []string{"1, 2", "Срочный документ исполняется за 5 рабочих дней."}}
+	quoted, docs, err := build_LiveAssistantReply(invented, "Сколько дней на срочный документ?", nil, []livestore.SimilarChunk{first, second}, nil, defaultReplyPrompts())
+	if err != nil || quoted.Kind != texts.KindAnswer || quoted.Text != texts.LiveUnsupportedIntro+"\n\n"+first.Content {
+		t.Fatalf("quoted %+v %v", quoted, err)
+	}
+	if len(quoted.Citations) != 1 || quoted.Citations[0].Paragraph != "6.7" || len(docs) != 1 || quoted.RelevancePercent != 80 {
+		t.Fatalf("quoted citations %+v docs %+v", quoted.Citations, docs)
+	}
+
+	grounded := &scriptedChat{replies: []string{"1", "По п. 6.7 срочный документ исполняется за три дня: 3 рабочих дня."}}
+	kept, _, keptErr := build_LiveAssistantReply(grounded, "Сколько дней на срочный документ?", nil, []livestore.SimilarChunk{first, second}, nil, defaultReplyPrompts())
+	if keptErr != nil || kept.Text != "По п. 6.7 срочный документ исполняется за три дня: 3 рабочих дня." || len(kept.Citations) != 1 {
+		t.Fatalf("kept %+v %v", kept, keptErr)
+	}
+}
+
 func TestBuild_LiveAssistantReplyUsesProcessAnswerPrompt(t *testing.T) {
 	prompts := defaultReplyPrompts()
 	prompts.Answer = "промпт кадров"
 	chatter := &scriptedChat{replies: []string{"1", "ответ кадров"}}
 	chunk := livestore.SimilarChunk{DocumentID: "doc-a", Content: "текст кадров", Distance: 0.2}
 	answer, _, err := build_LiveAssistantReply(chatter, "вопрос", nil, []livestore.SimilarChunk{chunk}, nil, prompts)
-	if err != nil || answer.Text != "ответ кадров" || len(chatter.systems) != 2 || chatter.systems[1] != "промпт кадров" {
+	if err != nil || answer.Text != "ответ кадров" || len(chatter.systems) != 2 || chatter.systems[1] != answer_System("промпт кадров") {
 		t.Fatalf("answer %+v prompts %+v err %v", answer, chatter.systems, err)
 	}
 }
@@ -189,6 +232,27 @@ func TestBuild_DraftRevisionJoinsParts(t *testing.T) {
 	if _, _, _, badErr := build_DraftRevision(bad, "проверь", nil, "короткий"); badErr == nil {
 		t.Fatal("bad json accepted")
 	}
+}
+
+func TestBuild_LiveAssistantReplyTurnsNoIntoFallback(t *testing.T) {
+	chunk := livestore.SimilarChunk{DocumentID: "doc-a", Paragraph: "6.4", Content: "Срок исчисляется с даты регистрации.", Distance: 0.55}
+	chatter := &scriptedChat{replies: []string{"1", texts.LiveAnswerNoAnswerMark + "."}}
+	reply, docs, err := build_LiveAssistantReply(chatter, "Сколько дней отпуска?", nil, []livestore.SimilarChunk{chunk}, nil, defaultReplyPrompts())
+	if err != nil || reply.Kind != texts.KindFallback || reply.Text != texts.FallbackText || len(reply.Citations) != 0 || len(docs) != 0 || reply.Contacts == nil {
+		t.Fatalf("refusal %+v %v", reply, err)
+	}
+
+	// «Нет» по существу - это ответ на «можно ли», а не отказ
+	honest := &scriptedChat{replies: []string{"1", "Нет, нельзя: сначала регистрация."}}
+	kept, _, keptErr := build_LiveAssistantReply(honest, "Можно ли передать до регистрации?", nil, []livestore.SimilarChunk{chunk}, nil, defaultReplyPrompts())
+	if keptErr != nil || kept.Kind != texts.KindAnswer || kept.Text != "Нет, нельзя: сначала регистрация." {
+		t.Fatalf("honest no %+v %v", kept, keptErr)
+	}
+}
+
+// Промпт шага ответа: промпт темы и правило отказа ядра
+func answer_System(prompt string) string {
+	return prompt + "\n" + texts.LiveAnswerRefusalRule
 }
 
 func defaultReplyPrompts() replyPrompts {

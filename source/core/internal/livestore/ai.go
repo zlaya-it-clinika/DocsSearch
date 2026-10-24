@@ -120,8 +120,12 @@ func (store *LiveStore) Start_Reindex(ctx context.Context, token string) (Reinde
 }
 
 type reindexChunk struct {
-	id      int64
-	content string
+	id        int64
+	title     string
+	section   string
+	paragraph string
+	appendix  string
+	content   string
 }
 
 func (store *LiveStore) run_Reindex() {
@@ -135,14 +139,19 @@ func (store *LiveStore) run_Reindex() {
 }
 
 func (store *LiveStore) reindex_Chunks(ctx context.Context) error {
-	rows, err := store.pool.Query(ctx, `SELECT chunk_id, content FROM chunks ORDER BY chunk_id`)
+	// Вектор строится так же, как при загрузке: адрес фрагмента плюс текст
+	rows, err := store.pool.Query(ctx, `
+		SELECT c.chunk_id, d.title, c.section, c.paragraph, c.appendix, c.content
+		FROM chunks c
+		JOIN documents d ON d.document_id = c.document_id
+		ORDER BY c.chunk_id`)
 	if err != nil {
 		return err
 	}
 	chunks := []reindexChunk{}
 	for rows.Next() {
 		var chunk reindexChunk
-		if err := rows.Scan(&chunk.id, &chunk.content); err != nil {
+		if err := rows.Scan(&chunk.id, &chunk.title, &chunk.section, &chunk.paragraph, &chunk.appendix, &chunk.content); err != nil {
 			rows.Close()
 			return err
 		}
@@ -156,7 +165,7 @@ func (store *LiveStore) reindex_Chunks(ctx context.Context) error {
 		batch := chunks[start:min(start+reindexBatchSize, len(chunks))]
 		contents := make([]string, len(batch))
 		for index, chunk := range batch {
-			contents[index] = chunk.content
+			contents[index] = chunk_EmbedText(chunk.title, chunk.section, chunk.paragraph, chunk.appendix, chunk.content)
 		}
 		vectors, err := store.embed_Texts(contents)
 		if err != nil {

@@ -79,3 +79,13 @@ func TestChoose_LiveReplyKind(t *testing.T) {
 		t.Fatalf("citation scope %+v", citations[0])
 	}
 }
+
+func TestChunk_EmbedTextAddsAddress(t *testing.T) {
+	got := chunk_EmbedText(" Инструкция по ДОУ ", "6", "6.7", "", "Срочные документы.")
+	if got != "Инструкция по ДОУ. "+texts.LiveSectionLabel+" 6. "+texts.LiveParagraphLabel+" 6.7.\nСрочные документы." {
+		t.Fatalf("embed text %q", got)
+	}
+	if bare := chunk_EmbedText("Памятка", "", "", "", "Текст."); bare != "Памятка.\nТекст." {
+		t.Fatalf("bare %q", bare)
+	}
+}

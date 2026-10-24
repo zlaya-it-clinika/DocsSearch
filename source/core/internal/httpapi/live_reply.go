@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"docssearch/core/internal/contacts"
+	"docssearch/core/internal/grounding"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
@@ -39,13 +40,6 @@ func build_LiveAssistantReply(chatter interface {
 	if chatter == nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
-	if kind == texts.KindClarify {
-		text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Clarify, texts.LiveClarifyPrompt), question, history, selected))
-		if err != nil || strings.TrimSpace(text) == "" {
-			return assistantReply{}, nil, livestore.ErrEmbedUnavailable
-		}
-		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
-	}
 	selectText, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Select, texts.LiveSelectPrompt), question, history, selected))
 	if err != nil {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
@@ -55,11 +49,32 @@ func build_LiveAssistantReply(chatter interface {
 	if len(selected) == 0 {
 		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
 	}
-	text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Answer, texts.LiveAnswerPrompt), question, history, selected))
+	// Близкие фрагменты разных документов - еще не повод переспрашивать: часто нужный пункт один,
+	// а второй документ лишь похож по словам. Уточняем, только если модели нужны фрагменты разных документов
+	if kind == texts.KindClarify && count_Documents(selected) > 1 {
+		text, err := chatter.Complete_Chat(build_ChatMessages(prompt_OrText(prompts.Clarify, texts.LiveClarifyPrompt), question, history, selected))
+		if err != nil || strings.TrimSpace(text) == "" {
+			return assistantReply{}, nil, livestore.ErrEmbedUnavailable
+		}
+		return build_PlainReply(texts.KindClarify, strings.TrimSpace(text)), []shownDocument{}, nil
+	}
+	answerPrompt := prompt_OrText(prompts.Answer, texts.LiveAnswerPrompt) + "\n" + texts.LiveAnswerRefusalRule
+	text, err := chatter.Complete_Chat(build_ChatMessages(answerPrompt, question, history, selected))
 	if err != nil || strings.TrimSpace(text) == "" {
 		return assistantReply{}, nil, livestore.ErrEmbedUnavailable
 	}
-	reply := build_PlainReply(texts.KindAnswer, strings.TrimSpace(text))
+	text = strings.TrimSpace(text)
+	// Шаг выбора иногда берет пункт, похожий только словами. Тогда модель ставит метку, и это отказ, а не ответ со ссылкой
+	if strings.Contains(strings.ToUpper(text), texts.LiveAnswerNoAnswerMark) {
+		return reply_WithContacts(build_PlainReply(texts.KindFallback, texts.FallbackText), nil), []shownDocument{}, nil
+	}
+	// Число, срок или номер пункта, которых нет ни во фрагментах, ни в вопросе, модель придумала.
+	// Пересказ не показываем: отдаем самый близкий из выбранных пунктов дословно
+	if unsupported := grounding.Find_UnsupportedNumbers(text, sources_OfChunks(question, selected)); len(unsupported) > 0 {
+		selected = selected[:1]
+		text = texts.LiveUnsupportedIntro + "\n\n" + selected[0].Content
+	}
+	reply := build_PlainReply(texts.KindAnswer, text)
 	reply.RelevancePercent = livestore.Relevance_Percent(selected[0])
 	citations := livestore.Build_ReplyCitations(selected)
 	reply.Citations = make([]citation, 0, len(citations))
@@ -84,6 +99,16 @@ func build_LiveAssistantReply(chatter interface {
 		})
 	}
 	return reply_WithContacts(reply, nil), documents, nil
+}
+
+// Источники для проверки чисел: вопрос и фрагменты вместе с названием документа и номером пункта
+func sources_OfChunks(question string, chunks []livestore.SimilarChunk) []string {
+	sources := make([]string, 0, len(chunks)+1)
+	sources = append(sources, question)
+	for _, chunk := range chunks {
+		sources = append(sources, strings.Join([]string{chunk.Title, chunk.Edition, chunk.Section, chunk.Paragraph, chunk.Appendix, chunk.Content}, "\n"))
+	}
+	return sources
 }
 
 func prompt_OrText(value, fallback string) string {
@@ -114,6 +139,14 @@ func parse_FragmentNumbers(raw string, count int) []int {
 		indexes = append(indexes, number-1)
 	}
 	return indexes
+}
+
+func count_Documents(chunks []livestore.SimilarChunk) int {
+	documents := map[string]bool{}
+	for _, chunk := range chunks {
+		documents[chunk.DocumentID] = true
+	}
+	return len(documents)
 }
 
 func chunks_AtIndexes(chunks []livestore.SimilarChunk, indexes []int) []livestore.SimilarChunk {
