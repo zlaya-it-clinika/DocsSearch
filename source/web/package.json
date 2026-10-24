@@ -2,6 +2,7 @@
 	"name": "docssearch-web",
 	"version": "0.1.0",
 	"private": true,
+	"license": "MIT",
 	"description": "Страница чата и попап-виджет DocsSearch. Node.js без внешних зависимостей.",
 	"type": "module",
 	"engines": {
