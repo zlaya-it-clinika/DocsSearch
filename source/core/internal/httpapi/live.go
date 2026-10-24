@@ -429,6 +429,8 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		AttachmentIDs []string `json:"attachmentIds"`
 		// nil - режим, сохраненный в сессии: read или plan
 		Mode *string `json:"mode"`
+		// Ответы на вопросы документа пачкой. text - их запись для ленты
+		Answers []fieldAnswer `json:"answers"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil || strings.TrimSpace(body.Text) == "" {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
@@ -481,7 +483,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 	if mode == texts.ChatModePlan && account.Has(texts.PermissionTemplatesUse) && account.Has(texts.PermissionChatUse) {
 		if len(body.AttachmentIDs) == 0 {
 			var planError error
-			plan, planError = advance_PlanTurn(session, body.Text, func() (layout.Organization, error) {
+			plan, planError = advance_PlanTurn(session, body.Text, body.Answers, func() (layout.Organization, error) {
 				return api.load_LayoutOrganization(request.Context(), token)
 			}, api.layoutFormat, api.chatter, time.Now())
 			if planError != nil {
@@ -584,7 +586,10 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			write_LiveError(responseWriter, historyError)
 			return
 		}
-		embedding, embedError := api.store.Embed_Question(body.Text)
+		history := read_ChatHistory(historyRaw)
+		// Ответ на уточнение ищется вместе с исходным вопросом
+		question := build_ClarifiedQuestion(history, body.Text)
+		embedding, embedError := api.store.Embed_Question(question)
 		if embedError != nil {
 			write_LiveError(responseWriter, embedError)
 			return
@@ -595,7 +600,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 			return
 		}
 		var replyError error
-		reply, documents, replyError = build_LiveAssistantReply(api.chatter, body.Text, read_ChatHistory(historyRaw), visible, closed, replyPrompt)
+		reply, documents, replyError = build_LiveAssistantReply(api.chatter, question, history, visible, closed, replyPrompt)
 		if replyError != nil {
 			write_LiveError(responseWriter, replyError)
 			return
@@ -619,7 +624,7 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 		}
 	}
 	reply = apply_ModeHint(reply, mode, body.Text)
-	userBody, err := json.Marshal(userLine{Role: "user", Text: body.Text, Attachments: turnAttachments})
+	userBody, err := json.Marshal(userLine{Role: "user", Text: body.Text, Attachments: turnAttachments, Answers: plan.Answered})
 	if err != nil {
 		write_LiveError(responseWriter, err)
 		return

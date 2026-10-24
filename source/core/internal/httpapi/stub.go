@@ -125,6 +125,8 @@ type templateState struct {
 	DraftText  string `json:"draftText,omitempty"`
 	FileLink   string `json:"fileLink,omitempty"`
 	DraftLink  string `json:"draftLink,omitempty"`
+	// Все поля без ответа, начиная с текущего: клиент задает их одной карточкой
+	Questions []templateQuestion `json:"questions,omitempty"`
 }
 
 type draftFile struct {
@@ -143,6 +145,8 @@ type assistantReply struct {
 	Contacts         *[]replyContact `json:"contacts,omitempty"`
 	Template         *templateState  `json:"template,omitempty"`
 	Draft            *draftState     `json:"draft,omitempty"`
+	// Готовые ответы на вопрос ассистента: названия документов в уточнении (clarify) и в выборе документа (template_choice)
+	Options []string `json:"options,omitempty"`
 	// Где искали ответ: процесс, выбранный в чате. Пустой объект - все процессы
 	Process *processRef `json:"process,omitempty"`
 	// Подсказка под ответом: в режиме «Чтение» документы не готовятся
@@ -182,6 +186,8 @@ type userLine struct {
 	Role        string              `json:"role"`
 	Text        string              `json:"text"`
 	Attachments []messageAttachment `json:"attachments,omitempty"`
+	// Ответы на вопросы документа пачкой: подпись поля и ответ
+	Answers []answerLine `json:"answers,omitempty"`
 }
 
 type loginResponse struct {
@@ -623,6 +629,8 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		AttachmentIDs []string `json:"attachmentIds"`
 		// nil - режим, сохраненный в сессии: read или plan
 		Mode *string `json:"mode"`
+		// Ответы на вопросы документа пачкой. text - их запись для ленты
+		Answers []fieldAnswer `json:"answers"`
 	}
 	if err := read_JSONBody(responseWriter, request, &body); err != nil {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
@@ -664,7 +672,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 	var plan planResult
 	if mode == texts.ChatModePlan && auth.Has_Permission(permissions, texts.PermissionTemplatesUse) && auth.Has_Permission(permissions, texts.PermissionChatUse) {
 		if len(body.AttachmentIDs) == 0 {
-			plan, _ = advance_PlanTurn(session, body.Text, func() (layout.Organization, error) {
+			plan, _ = advance_PlanTurn(session, body.Text, body.Answers, func() (layout.Organization, error) {
 				return stubStore.organization.layout_Snapshot(), nil
 			}, stubStore.layoutFormat, nil, time.Now())
 		}
@@ -739,7 +747,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		session.title = build_SessionTitle(body.Text)
 	}
 	session.updatedAt = time.Now().UTC()
-	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text, Attachments: turnAttachments})
+	session.messages = append(session.messages, userLine{Role: "user", Text: body.Text, Attachments: turnAttachments, Answers: plan.Answered})
 	stored := reply
 	stored.Role = "assistant"
 	session.messages = append(session.messages, stored)
@@ -1532,10 +1540,20 @@ func build_AssistantReply(session *sessionRecord, text string, allowBlank bool) 
 	case strings.Contains(lower, texts.PhraseNotFound):
 		return build_PlainReply(texts.KindFallback, texts.FallbackText), blank.Step{}, nil
 	case strings.Contains(lower, texts.PhraseClarify):
-		return build_PlainReply(texts.KindClarify, texts.ClarifyText), blank.Step{}, nil
+		reply := build_PlainReply(texts.KindClarify, texts.ClarifyText)
+		reply.Options = []string{texts.SeedInstructionTitle, texts.SeedRestrictedTitle}
+		return reply, blank.Step{}, nil
 	default:
 		return build_PlainReply(texts.KindFallback, texts.FallbackText), blank.Step{}, nil
 	}
+}
+
+// Название модуля из свойств файла, иначе заголовок из текста
+func blank_Title(step blank.Step) string {
+	if step.Name != "" {
+		return step.Name
+	}
+	return step.Title
 }
 
 func apply_BlankStep(session *sessionRecord, step blank.Step) {
@@ -1551,7 +1569,7 @@ func reply_FromBlank(step blank.Step) assistantReply {
 		reply := build_PlainReply(texts.KindTemplateReady, texts.TemplateReadyText)
 		reply.Template = &templateState{
 			ID:        step.BlankID,
-			Title:     step.Title,
+			Title:     blank_Title(step),
 			DraftText: step.DraftText,
 			FileLink:  blank_FileLink(step.BlankID),
 		}
@@ -1560,10 +1578,11 @@ func reply_FromBlank(step blank.Step) assistantReply {
 	reply := build_PlainReply(texts.KindTemplateField, step.Question)
 	reply.Template = &templateState{
 		ID:         step.BlankID,
-		Title:      step.Title,
+		Title:      blank_Title(step),
 		Field:      step.Field,
 		FieldLabel: step.FieldLabel,
 		FileLink:   blank_FileLink(step.BlankID),
+		Questions:  questions_FromBlank(step.Questions),
 	}
 	return reply
 }

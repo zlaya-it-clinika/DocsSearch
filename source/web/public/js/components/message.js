@@ -3,6 +3,7 @@ import { build_LinkedFileUrl } from '../api.js';
 import { copy_ToClipboard, create_Element, create_Icon, create_IconButton, create_Logo, download_TextFile } from '../lib/dom.js';
 import { build_SafeFileName, format_FileSize } from '../lib/format.js';
 import { render_Markdown } from '../lib/markdown.js';
+import { reveal_Message } from '../lib/reveal.js';
 import { create_ProcessBadge, get_KnownProcess } from '../processes.js';
 import { AppTexts, ChatTexts, ProcessTexts } from '../texts.js';
 import { create_CitationChip, render_Relevance, render_Sources } from './citations.js';
@@ -267,6 +268,27 @@ function render_SearchScope(message) {
 	]);
 }
 
+// Вопросы ассистента с ответами пользователя одним блоком ленты, как отвеченные вопросы в Claude Code.
+// rows: [{ label, value }]. Пустой value - вопрос пропущен. unanswered - на вопросы не ответили (отмена, смена режима)
+export function render_QuestionAnswers({ title, rows, unanswered = false }) {
+	return create_Element('div', { className: unanswered ? 'qa-block is-unanswered' : 'qa-block' }, [
+		create_Element('div', { className: 'qa-block-header' }, [
+			create_Icon(unanswered ? 'help' : 'check', 'icon-sm'),
+			create_Element('span', { className: 'qa-block-title', text: title }),
+			create_Element('span', { className: 'qa-block-status', text: unanswered ? ChatTexts.questionUnanswered : ChatTexts.questionAnswered }),
+		]),
+		rows.length > 0
+			? create_Element('dl', { className: 'qa-block-rows' }, rows.flatMap((row) => [
+				create_Element('dt', { className: 'qa-block-question', text: row.label }),
+				create_Element('dd', {
+					className: row.value ? 'qa-block-answer' : 'qa-block-answer is-empty',
+					text: row.value || (unanswered ? ChatTexts.questionNoAnswer : ChatTexts.questionSkipped),
+				}),
+			]))
+			: null,
+	]);
+}
+
 // Подсказка ядра под ответом: например, что документы готовятся в режиме «План»
 function render_Hint(hint) {
 	if (typeof hint !== 'string' || hint.trim() === '') {
@@ -275,13 +297,21 @@ function render_Hint(hint) {
 	return create_Element('div', { className: 'message-hint' }, [create_Icon('info', 'icon-sm'), create_Element('span', { text: hint })]);
 }
 
+// message.reveal - ответ только что пришёл: он появляется плавно, один раз. Перерисовка показывает его целиком
 function render_AssistantMessage(message, handlers) {
 	const header = create_AssistantHeader(message.kind);
-	return create_Element('div', { className: 'message message-assistant', dataset: { kind: message.kind ?? '' } }, [
+	const body = create_Element('div', { className: 'message-body' }, [...render_AssistantBody(message, handlers), render_SearchScope(message), render_Hint(message.hint)]);
+	const element = create_Element('div', { className: 'message message-assistant', dataset: { kind: message.kind ?? '' } }, [
 		header,
-		create_Element('div', { className: 'message-body' }, [...render_AssistantBody(message, handlers), render_SearchScope(message), render_Hint(message.hint)]),
+		body,
 		create_Element('div', { className: 'message-actions' }, [create_CopyButton(build_AssistantCopyText(message))]),
 	]);
+	if (message.reveal) {
+		delete message.reveal;
+		element.classList.add('is-new');
+		reveal_Message(body, { onProgress: handlers.onRevealProgress });
+	}
+	return element;
 }
 
 function render_UserMessage(message, handlers) {
@@ -330,7 +360,8 @@ function render_UserMessage(message, handlers) {
 	return create_Element('div', { className: 'message message-user' }, children);
 }
 
-// handlers: onRepeat(text) - задать вопрос заново, onRetry(message) - повторить неотправленное
+// handlers: onRepeat(text) - задать вопрос заново, onRetry(message) - повторить неотправленное,
+// onRevealProgress() - новый ответ проявляется, экран держит низ ленты
 export function render_Message(message, handlers = {}) {
 	if (message.role === 'user') {
 		return render_UserMessage(message, handlers);

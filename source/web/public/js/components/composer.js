@@ -163,12 +163,6 @@ export function create_Composer({ onSubmit, allowCheck = true, allowAssist = fal
 			update_Placeholder();
 		},
 
-		// Готовая подсказка ответа, например номер или название документа из списка. Пусто - подсказка режима
-		set_AnswerPrompt(text) {
-			basePlaceholder = text || idlePlaceholder;
-			update_Placeholder();
-		},
-
 		// Подсказка пустого поля для режима чата. Подсказку поля бланка не перебивает
 		set_IdlePlaceholder(text) {
 			const wasIdle = basePlaceholder === idlePlaceholder;

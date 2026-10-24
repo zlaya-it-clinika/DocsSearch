@@ -171,6 +171,10 @@ export function send_ChatMessage(sessionId, text, extra = {}) {
 	if (typeof extra.mode === 'string') {
 		json.mode = extra.mode;
 	}
+	// Ответы на вопросы документа пачкой: [{ field, value }]. text - их запись для ленты
+	if (Array.isArray(extra.answers) && extra.answers.length > 0) {
+		json.answers = extra.answers;
+	}
 	return request_Api('POST', `/sessions/${encode_Segment(sessionId)}/messages`, { json });
 }
 

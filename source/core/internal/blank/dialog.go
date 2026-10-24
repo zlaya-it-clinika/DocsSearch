@@ -19,15 +19,19 @@ type FillState struct {
 }
 
 type Step struct {
-	BlankID    string
-	Title      string
+	BlankID string
+	Title   string
+	// Название модуля для заголовков: «Модуль распоряжения о создании рабочей группы»
+	Name       string
 	Field      string
 	FieldLabel string
 	Question   string
-	DraftText  string
-	DraftDocx  []byte
-	Ready      bool
-	State      FillState
+	// Все поля без ответа, начиная с текущего: клиент задает их одной карточкой
+	Questions []Question
+	DraftText string
+	DraftDocx []byte
+	Ready     bool
+	State     FillState
 }
 
 func Match_Blank(text string) (Blank, bool) {
@@ -172,9 +176,11 @@ func step_ForField(item Blank, state FillState, field BlankField) Step {
 	return Step{
 		BlankID:    item.ID,
 		Title:      item.Title,
+		Name:       item.Name,
 		Field:      field.Number,
 		FieldLabel: field.Label,
 		Question:   field.Question,
+		Questions:  remaining_Questions(item, state),
 		State:      state,
 	}
 }
@@ -183,6 +189,7 @@ func finish_Blank(item Blank, state FillState) Step {
 	step := Step{
 		BlankID:   item.ID,
 		Title:     item.Title,
+		Name:      item.Name,
 		DraftText: Build_Draft(item, state),
 		Ready:     true,
 		State:     FillState{},

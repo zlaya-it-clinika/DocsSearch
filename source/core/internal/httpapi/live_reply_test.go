@@ -154,6 +154,36 @@ func TestBuild_LiveAssistantReplyClarifiesOnlyAcrossDocuments(t *testing.T) {
 	}
 }
 
+func TestBuild_LiveAssistantReplyClarifyOptionsAndAnswer(t *testing.T) {
+	instruction := livestore.SimilarChunk{DocumentID: "doc-instruction", Title: "Инструкция", Paragraph: "7.1", Content: "Исходящий регистрируется после подписания.", Distance: 0.28}
+	guide := livestore.SimilarChunk{DocumentID: "doc-guide", Title: "Руководство", Paragraph: "5.2", Content: "Модульный документ регистрируется в ИИС ДО.", Distance: 0.285}
+	repeat := livestore.SimilarChunk{DocumentID: "doc-instruction", Title: "Инструкция", Paragraph: "7.2", Content: "Номер ставится в ИИС ДО.", Distance: 0.29}
+
+	both := &scriptedChat{replies: []string{"1, 2, 3", "О каком документе речь?"}}
+	clarify, _, err := build_LiveAssistantReply(both, "Когда регистрируется?", nil, []livestore.SimilarChunk{instruction, guide, repeat}, nil, defaultReplyPrompts())
+	if err != nil || clarify.Kind != texts.KindClarify || len(clarify.Options) != 2 || clarify.Options[0] != "Инструкция" || clarify.Options[1] != "Руководство" {
+		t.Fatalf("clarify options %+v %v", clarify, err)
+	}
+
+	// Ответ на уточнение: ищем по исходному вопросу с уточнением и второй раз не переспрашиваем
+	history := read_ChatHistory([][]byte{
+		[]byte(`{"role":"user","text":"Когда регистрируется?"}`),
+		[]byte(`{"role":"assistant","kind":"clarify","text":"О каком документе речь?"}`),
+	})
+	question := build_ClarifiedQuestion(history, "Инструкция")
+	if question != "Когда регистрируется?\nИнструкция" {
+		t.Fatalf("clarified question %q", question)
+	}
+	if build_ClarifiedQuestion(history[:1], "Инструкция") != "Инструкция" {
+		t.Fatal("question without clarify was merged")
+	}
+	answered := &scriptedChat{replies: []string{"1, 3", "После подписания."}}
+	answer, _, answerErr := build_LiveAssistantReply(answered, question, history, []livestore.SimilarChunk{instruction, guide, repeat}, nil, defaultReplyPrompts())
+	if answerErr != nil || answer.Kind != texts.KindAnswer || len(answer.Options) != 0 {
+		t.Fatalf("answer after clarify %+v %v", answer, answerErr)
+	}
+}
+
 func TestBuild_LiveAssistantReplyReplacesUnsupportedNumbers(t *testing.T) {
 	first := livestore.SimilarChunk{DocumentID: "doc-a", Title: "Инструкция", Paragraph: "6.7", Content: "Срочный документ исполняется в течение 3 (трех) рабочих дней.", Distance: 0.2}
 	second := livestore.SimilarChunk{DocumentID: "doc-b", Paragraph: "6.6", Content: "Обращения граждан - 30 календарных дней.", Distance: 0.3}
