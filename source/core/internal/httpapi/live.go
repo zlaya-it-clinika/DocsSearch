@@ -23,12 +23,13 @@ type liveAPI struct {
 	chatter interface {
 		Complete_Chat(messages []ollama.ChatMessage) (string, error)
 	}
+	layoutFormat layout.Format
 }
 
 func register_LiveRoutes(store *livestore.LiveStore, chatter interface {
 	Complete_Chat(messages []ollama.ChatMessage) (string, error)
-}) *http.ServeMux {
-	api := &liveAPI{store: store, chatter: chatter}
+}, layoutFormat layout.Format) *http.ServeMux {
+	api := &liveAPI{store: store, chatter: chatter, layoutFormat: layoutFormat}
 	routeMux := http.NewServeMux()
 	routeMux.HandleFunc("POST /auth/login", api.serve_Login)
 	routeMux.HandleFunc("POST /auth/logout", api.serve_Logout)
@@ -456,14 +457,14 @@ func (api *liveAPI) serve_SessionMessage(responseWriter http.ResponseWriter, req
 	var reply assistantReply
 	var documents []shownDocument
 	var turnAttachments []messageAttachment
-	// Макет документа по ГОСТ: продолжение начатого или новая просьба подготовить документ
+	// Макет документа: продолжение начатого или новая просьба подготовить документ
 	var layoutStep layout.Step
 	layoutHandled := false
 	if account.Has(texts.PermissionTemplatesUse) && account.Has(texts.PermissionChatUse) {
 		var layoutError error
 		layoutStep, layoutHandled, layoutError = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
 			return api.load_LayoutOrganization(request.Context(), token)
-		}, api.chatter, time.Now())
+		}, api.layoutFormat, api.chatter, time.Now())
 		if layoutError != nil {
 			write_LiveError(responseWriter, layoutError)
 			return

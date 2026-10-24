@@ -7,6 +7,7 @@ import (
 
 	"docssearch/core/internal/auth"
 	"docssearch/core/internal/config"
+	"docssearch/core/internal/layout"
 	"docssearch/core/internal/texts"
 )
 
@@ -113,7 +114,11 @@ func TestStubProcessCardsAndChatSelection(t *testing.T) {
 }
 
 func TestStubProcessMarksCitations(t *testing.T) {
-	stubStore := create_StubStore(false, auth.Settings{})
+	layoutFormat, err := layout.Load_Format(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubStore := create_StubStore(false, auth.Settings{}, layoutFormat)
 	answer := assistantReply{Kind: texts.KindAnswer, Citations: []citation{{DocumentID: texts.SeedInstructionID}}}
 	marked := stubStore.apply_StubProcess(answer, texts.ProcessDocuments)
 	if marked.Kind != texts.KindAnswer || marked.Citations[0].ProcessID != texts.ProcessDocuments || marked.Process == nil {

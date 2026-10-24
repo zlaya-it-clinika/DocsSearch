@@ -11,7 +11,7 @@ import (
 )
 
 // Диалог макета: наводящие вопросы по полям, ответы в состоянии сессии, в конце - проект .docx.
-// Должностные лица, герб и штамп берутся из вкладки «Организация»
+// Должностные лица, герб и штамп берутся из вкладки «Организация», правила оформления - из профилей (format.go)
 
 type Official struct {
 	Position   string
@@ -58,7 +58,7 @@ type Step struct {
 	State      State
 }
 
-func Start_Layout(info texts.LayoutInfo, request string, organization Organization, chatter Chatter, now time.Time) Step {
+func Start_Layout(info texts.LayoutInfo, request string, organization Organization, format Format, chatter Chatter, now time.Time) Step {
 	state := State{LayoutID: info.ID, Answers: map[string]string{}, Request: strings.TrimSpace(request)}
 	for key, value := range extract_Answers(info, request, chatter) {
 		// «Иванову» из просьбы - должностное лицо из вкладки «Организация», как и ответ на вопрос
@@ -69,14 +69,14 @@ func Start_Layout(info texts.LayoutInfo, request string, organization Organizati
 		}
 		state.Answers[key] = value
 	}
-	step := next_Step(info, state, organization, chatter, now)
+	step := next_Step(info, state, organization, format, chatter, now)
 	if !step.Ready {
 		step.Question = format_Name(texts.LayoutStartText, info.Name) + "\n\n" + step.Question
 	}
 	return step
 }
 
-func Advance_Layout(state State, text string, organization Organization, chatter Chatter, now time.Time) Step {
+func Advance_Layout(state State, text string, organization Organization, format Format, chatter Chatter, now time.Time) Step {
 	info, found := Find_Layout(state.LayoutID)
 	if !found {
 		return Step{Cancelled: true}
@@ -94,17 +94,17 @@ func Advance_Layout(state State, text string, organization Organization, chatter
 		}
 		state.Answers[field.Key] = answer
 	}
-	return next_Step(info, state, organization, chatter, now)
+	return next_Step(info, state, organization, format, chatter, now)
 }
 
-func next_Step(info texts.LayoutInfo, state State, organization Organization, chatter Chatter, now time.Time) Step {
+func next_Step(info texts.LayoutInfo, state State, organization Organization, format Format, chatter Chatter, now time.Time) Step {
 	for _, field := range info.Fields {
 		if _, answered := state.Answers[field.Key]; answered {
 			continue
 		}
 		return ask_Field(info, state, field, organization)
 	}
-	return finish_Layout(info, state, organization, chatter, now)
+	return finish_Layout(info, state, organization, format, chatter, now)
 }
 
 func ask_Field(info texts.LayoutInfo, state State, field texts.LayoutField, organization Organization) Step {
@@ -261,11 +261,11 @@ func format_Name(template, name string) string {
 	return strings.ReplaceAll(template, "{name}", name)
 }
 
-func finish_Layout(info texts.LayoutInfo, state State, organization Organization, chatter Chatter, now time.Time) Step {
-	date := now.Format("02.01.2006")
-	parts := compose_Parts(info, state, chatter, date)
-	doc := build_Document(info, state, parts, organization, date)
-	body, err := build_Docx(doc)
+func finish_Layout(info texts.LayoutInfo, state State, organization Organization, format Format, chatter Chatter, now time.Time) Step {
+	date := format.format_Date(now)
+	parts := compose_Parts(info, state, chatter, date, format)
+	doc := build_Document(info, state, parts, organization, date, format)
+	body, err := build_Docx(doc, format)
 	step := Step{
 		LayoutID:  info.ID,
 		Name:      info.Name,

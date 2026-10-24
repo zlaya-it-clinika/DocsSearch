@@ -100,9 +100,21 @@ func check_ValueFromRequest(value, request string) bool {
 	return false
 }
 
+// Подсказка модели с примерами ФИО, записанными по тем же правилам, что и документ
+func build_ComposePrompt(format Format) string {
+	sample := func(text string) string {
+		return format.header_Name(parse_Person(text))
+	}
+	return strings.NewReplacer(
+		"{sampleLetter}", sample(texts.LayoutSampleLetterAddressee),
+		"{sampleInternal}", sample(texts.LayoutSampleInternalAddressee),
+		"{sampleAuthor}", sample(texts.LayoutSampleAuthor),
+	).Replace(texts.LayoutComposePrompt)
+}
+
 // Реквизиты и текст от модели. Число не из сведений или неверный ответ - сборка из ответов как есть
-func compose_Parts(info texts.LayoutInfo, state State, chatter Chatter, date string) parts {
-	fallback := fallback_Parts(info, state)
+func compose_Parts(info texts.LayoutInfo, state State, chatter Chatter, date string, format Format) parts {
+	fallback := fallback_Parts(info, state, format)
 	if chatter == nil {
 		return fallback
 	}
@@ -123,7 +135,7 @@ func compose_Parts(info texts.LayoutInfo, state State, chatter Chatter, date str
 		texts.LayoutAnswersLabel, answers.String(),
 		texts.LayoutRequestLabel, state.Request)
 	raw, err := chatter.Complete_Chat([]ollama.ChatMessage{
-		{Role: "system", Content: texts.LayoutComposePrompt},
+		{Role: "system", Content: build_ComposePrompt(format)},
 		{Role: "user", Content: user},
 	})
 	if err != nil {
@@ -135,12 +147,12 @@ func compose_Parts(info texts.LayoutInfo, state State, chatter Chatter, date str
 	}
 	composed.Title = strings.Trim(strings.TrimSpace(composed.Title), ".")
 	composed.Text = strip_LetterFrame(clean_Lines(composed.Text), composed.Greeting)
-	composed.Addressee = normalize_HeaderLines(clean_Lines(composed.Addressee), info.Kind == texts.LayoutKindLetter)
-	composed.Author = normalize_HeaderLines(clean_Lines(composed.Author), false)
+	composed.Addressee = normalize_HeaderLines(format, clean_Lines(composed.Addressee), info.Kind == texts.LayoutKindLetter)
+	composed.Author = normalize_HeaderLines(format, clean_Lines(composed.Author), false)
 	if len(composed.Text) == 0 {
 		return fallback
 	}
-	// Заголовок к тексту отвечает на вопрос «о чем?» (п. 5.17 ГОСТ). Тему сотрудника с предлогом берем дословно:
+	// Заголовок к тексту отвечает на вопрос «о чем?» (п. 8.15 Инструкции, п. 5.17 ГОСТ). Тему сотрудника с предлогом берем дословно:
 	// модель ее иногда искажает («Об акт о списании»). Своя формулировка модели - только когда темы нет
 	if fallback.Title != "" && (check_HasAboutPrefix(fallback.Title) || info.Kind == texts.LayoutKindProtocol || !check_HasAboutPrefix(composed.Title)) {
 		composed.Title = fallback.Title
@@ -169,13 +181,14 @@ func compose_Parts(info texts.LayoutInfo, state State, chatter Chatter, date str
 	return composed
 }
 
-func fallback_Parts(info texts.LayoutInfo, state State) parts {
+// Без модели падеж не поменять, но ФИО в шапке записывается по правилам оформления
+func fallback_Parts(info texts.LayoutInfo, state State, format Format) parts {
 	result := parts{Title: fix_Preposition(subject_Title(info, state.Answers[texts.LayoutFieldSubject]))}
 	if addressee := state.Answers[texts.LayoutFieldAddressee]; addressee != "" {
-		result.Addressee = []string{addressee}
+		result.Addressee = normalize_HeaderLines(format, []string{addressee}, info.Kind == texts.LayoutKindLetter)
 	}
 	if author := state.Answers[texts.LayoutFieldAuthor]; author != "" && info.Kind == texts.LayoutKindNote {
-		result.Author = []string{"от " + author}
+		result.Author = normalize_HeaderLines(format, []string{texts.LayoutAuthorPrefix + " " + author}, false)
 	}
 	result.Text = clean_Lines(strings.Split(state.Answers[texts.LayoutFieldPoints], "\n"))
 	return result
@@ -212,9 +225,10 @@ func fix_Preposition(title string) string {
 	return "О " + rest
 }
 
-// Строки адресата и составителя по п. 5.15 ГОСТ: организация первой (в письме), должность и ФИО на разных строках,
-// ФИО - фамилия и инициалы: «Генеральному директору Сидорову Петру Петровичу» -> «Генеральному директору», «Сидорову П.П.»
-func normalize_HeaderLines(lines []string, letter bool) []string {
+// Строки адресата и составителя: организация первой (в письме), должность и ФИО на разных строках,
+// ФИО - инициалы и фамилия по правилам оформления (п. 8.12.1 Инструкции, п. 5.15 ГОСТ):
+// «Генеральному директору Сидорову Петру Петровичу» -> «Генеральному директору», «П. П. Сидорову»
+func normalize_HeaderLines(format Format, lines []string, letter bool) []string {
 	organizations := []string{}
 	rest := []string{}
 	for _, line := range lines {
@@ -230,7 +244,7 @@ func normalize_HeaderLines(lines []string, letter bool) []string {
 		if parsed.PositionRaw != "" {
 			rest = append(rest, parsed.PositionRaw)
 		}
-		rest = append(rest, parsed.Surname+" "+parsed.Initials)
+		rest = append(rest, format.header_Name(parsed))
 	}
 	return append(organizations, rest...)
 }
@@ -284,7 +298,7 @@ func cut_JSONObject(raw string) string {
 }
 
 // Документ по виду бланка: шапка, преамбула, подписи
-func build_Document(info texts.LayoutInfo, state State, composed parts, organization Organization, date string) document {
+func build_Document(info texts.LayoutInfo, state State, composed parts, organization Organization, date string, format Format) document {
 	answers := state.Answers
 	doc := document{
 		Kind:      info.Kind,
@@ -301,15 +315,15 @@ func build_Document(info texts.LayoutInfo, state State, composed parts, organiza
 		doc.HeaderRight = composed.Addressee
 		doc.Greeting = composed.Greeting
 		doc.Closing = texts.LayoutClosingPhrase
-		doc.Signatures = []signature{sign_Person(answers[texts.LayoutFieldSigner], "")}
-		doc.Executor = answers[texts.LayoutFieldExecutor]
+		doc.Signatures = []signature{sign_Person(format, answers[texts.LayoutFieldSigner], "")}
+		doc.Executor = format.executor_Text(answers[texts.LayoutFieldExecutor])
 	case texts.LayoutKindAct:
 		doc.Emblem, doc.Stamp = organization.Emblem, organization.Stamp
 		if basis := answers[texts.LayoutFieldBasis]; basis != "" {
 			doc.Preamble = append(doc.Preamble, texts.LayoutBasisLabel+" "+basis)
 		}
 		doc.Preamble = append(doc.Preamble, texts.LayoutCommitteeLabel+" "+answers[texts.LayoutFieldCommittee])
-		doc.Signatures = committee_Signatures(answers[texts.LayoutFieldCommittee])
+		doc.Signatures = committee_Signatures(format, answers[texts.LayoutFieldCommittee])
 	case texts.LayoutKindProtocol:
 		doc.Emblem, doc.Stamp = organization.Emblem, organization.Stamp
 		doc.Preamble = []string{
@@ -322,25 +336,26 @@ func build_Document(info texts.LayoutInfo, state State, composed parts, organiza
 			doc.Preamble = append(doc.Preamble, fmt.Sprintf("%d. %s", index+1, item))
 		}
 		doc.Signatures = []signature{
-			sign_Person(answers[texts.LayoutFieldChair], texts.LayoutChairSign),
-			sign_Person(answers[texts.LayoutFieldSecretary], texts.LayoutSecretarySign),
+			sign_Person(format, answers[texts.LayoutFieldChair], texts.LayoutChairSign),
+			sign_Person(format, answers[texts.LayoutFieldSecretary], texts.LayoutSecretarySign),
 		}
 	default:
 		doc.HeaderRight = append(append([]string{}, composed.Addressee...), "")
 		doc.HeaderRight = append(doc.HeaderRight, composed.Author...)
-		doc.Signatures = []signature{sign_Person(answers[texts.LayoutFieldAuthor], "")}
+		doc.Signatures = []signature{sign_Person(format, answers[texts.LayoutFieldAuthor], "")}
 	}
 	return doc
 }
 
-// Подпись: должность слева, «И.О. Фамилия» справа (п. 5.22 ГОСТ). status заменяет должность: «Председатель»
-func sign_Person(text, status string) signature {
+// Подпись: должность слева, инициалы и фамилия справа (п. 8.19.2 Инструкции, п. 5.22 ГОСТ).
+// status заменяет должность: «Председатель»
+func sign_Person(format Format, text, status string) signature {
 	parsed := parse_Person(text)
 	position := parsed.Position
 	if status != "" {
 		position = status
 	}
-	name := parsed.Signature
+	name := format.signature_Name(parsed)
 	if name == "" {
 		name = strings.TrimSpace(text)
 		if status == "" {
@@ -350,8 +365,10 @@ func sign_Person(text, status string) signature {
 	return signature{Position: position, Name: name}
 }
 
-// Члены комиссии через «;»: председатель - строка со словом «председатель» или первая (п. 5.22 ГОСТ, подпись комиссии)
-func committee_Signatures(committee string) []signature {
+// Члены комиссии через «;»: председатель - строка со словом «председатель» или первая.
+// Подпись члена комиссии - по правилу committeeMemberLabel: «Член комиссии» у каждого (п. 8.19.2 Инструкции)
+// или «Члены комиссии» один раз над подписями (п. 5.22 ГОСТ)
+func committee_Signatures(format Format, committee string) []signature {
 	items := split_List(committee)
 	if len(items) == 0 {
 		return nil
@@ -363,18 +380,21 @@ func committee_Signatures(committee string) []signature {
 			break
 		}
 	}
-	signatures := []signature{sign_Person(items[chair], texts.LayoutChairSign+" комиссии")}
+	signatures := []signature{sign_Person(format, items[chair], texts.LayoutCommitteeChairSign)}
 	first := true
 	for index, item := range items {
 		if index == chair {
 			continue
 		}
 		status := " "
-		if first {
+		switch {
+		case format.CommitteeMemberLabel == CommitteeLabelEach:
+			status = texts.LayoutCommitteeMemberSign
+		case first:
 			status = texts.LayoutCommitteeSign
-			first = false
 		}
-		sign := sign_Person(item, status)
+		first = false
+		sign := sign_Person(format, item, status)
 		sign.Position = strings.TrimSpace(sign.Position)
 		signatures = append(signatures, sign)
 	}

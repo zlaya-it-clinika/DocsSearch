@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"docssearch/core/internal/config"
+	"docssearch/core/internal/layout"
 	"docssearch/core/internal/livestore"
 	"docssearch/core/internal/ollama"
 	"docssearch/core/internal/texts"
@@ -47,6 +48,11 @@ func (writer *statusWriter) Write(payload []byte) (int, error) {
 func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 	var routeMux *http.ServeMux
 	var routeHandler http.Handler
+	// Правила оформления макетов: ошибка в профиле останавливает запуск, а не всплывает в готовом документе
+	layoutFormat, err := layout.Load_Format(loadedConfig.LayoutFormatPriority)
+	if err != nil {
+		return nil, err
+	}
 	if strings.EqualFold(loadedConfig.Mode, config.ModeLive) {
 		if strings.TrimSpace(loadedConfig.DatabaseURL) == "" {
 			return nil, errors.New(texts.LiveDatabaseMissing)
@@ -57,12 +63,12 @@ func NewHandler(loadedConfig config.Config) (http.Handler, error) {
 			return nil, err
 		}
 		apply_SavedAISettings(store, embedder)
-		routeMux = register_LiveRoutes(store, embedder)
+		routeMux = register_LiveRoutes(store, embedder, layoutFormat)
 		register_AIRoutes(routeMux, create_LiveAIAdmin(store, embedder))
 		register_OrganizationRoutes(routeMux, store)
 		routeHandler = routeMux
 	} else {
-		stubStore := create_StubStore(loadedConfig.StubWithoutUsers, loadedConfig.AuthDefaults)
+		stubStore := create_StubStore(loadedConfig.StubWithoutUsers, loadedConfig.AuthDefaults, layoutFormat)
 		routeMux = stubStore.register_StubRoutes()
 		client := ollama.New_Client(loadedConfig.OllamaURL, loadedConfig.OllamaEmbedModel, loadedConfig.OllamaChatModel)
 		register_AIRoutes(routeMux, stubStore.create_AIAdmin(client, loadedConfig.OllamaEmbedDimensions))

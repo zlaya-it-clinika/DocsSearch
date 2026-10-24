@@ -312,10 +312,12 @@ type stub struct {
 	ldapSettings   auth.LdapSettings
 	// Реквизиты организации для макетов документов в чате
 	organization *stubOrganization
+	// Правила оформления макетов из профилей internal/layout/formats
+	layoutFormat layout.Format
 }
 
 // withoutUsers: старт без admin/admin и user/user, первая регистрация создаёт администратора
-func create_StubStore(withoutUsers bool, authDefaults auth.Settings) *stub {
+func create_StubStore(withoutUsers bool, authDefaults auth.Settings, layoutFormat layout.Format) *stub {
 	stubStore := &stub{
 		usersByID:           map[string]*userRecord{},
 		usersByLogin:        map[string]*userRecord{},
@@ -336,6 +338,7 @@ func create_StubStore(withoutUsers bool, authDefaults auth.Settings) *stub {
 		rolesByID:           map[string]*roleRecord{},
 		signupSettings:      authDefaults.Signup,
 		ldapSettings:        authDefaults.Ldap,
+		layoutFormat:        layoutFormat,
 	}
 	stubStore.seed_Roles()
 	if withoutUsers {
@@ -649,7 +652,7 @@ func (stubStore *stub) serve_SessionMessage(responseWriter http.ResponseWriter, 
 		// В заглушке нет модели: макет собирается из ответов как есть
 		layoutStep, layoutHandled, _ = advance_LayoutTurn(session, body.Text, func() (layout.Organization, error) {
 			return stubStore.organization.layout_Snapshot(), nil
-		}, nil, time.Now())
+		}, stubStore.layoutFormat, nil, time.Now())
 	}
 	if !layoutHandled && auth.Has_Permission(permissions, texts.PermissionTemplatesUse) {
 		step, handled = blank.Advance_Blank(session.blankFill, body.Text)

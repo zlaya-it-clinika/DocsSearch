@@ -43,6 +43,16 @@ func test_PNG(t *testing.T, width, height int) []byte {
 	return buffer.Bytes()
 }
 
+// Правила оформления по умолчанию: Инструкция по ДОУ, затем ГОСТ
+func test_Format(t *testing.T, order ...string) Format {
+	t.Helper()
+	format, err := Load_Format(order)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return format
+}
+
 func test_Organization(t *testing.T) Organization {
 	return Organization{
 		Officials: []Official{
@@ -91,24 +101,27 @@ func TestMatch_RequestTellsOrdersFromQuestions(t *testing.T) {
 	}
 }
 
+// Подпись по Инструкции: «И. И. Иванов» (п. 8.19.2), по ГОСТ: «И.И. Иванов» (п. 5.22)
 func TestParse_PersonSignature(t *testing.T) {
-	for text, want := range map[string][2]string{
-		"менеджер отдела продаж Петрова Мария Сергеевна": {"Менеджер отдела продаж", "М.С. Петрова"},
-		"Руководитель ИТ-отдела Иванов И.И.":             {"Руководитель ИТ-отдела", "И.И. Иванов"},
-		"Генеральный директор А.Б. Петров":               {"Генеральный директор", "А.Б. Петров"},
-		"директор Департамента ДОУ Сидоров П. П.":        {"Директор Департамента ДОУ", "П.П. Сидоров"},
+	instruction, gost := test_Format(t), test_Format(t, "gost")
+	for text, want := range map[string][3]string{
+		"менеджер отдела продаж Петрова Мария Сергеевна": {"Менеджер отдела продаж", "М. С. Петрова", "М.С. Петрова"},
+		"Руководитель ИТ-отдела Иванов И.И.":             {"Руководитель ИТ-отдела", "И. И. Иванов", "И.И. Иванов"},
+		"Генеральный директор А.Б. Петров":               {"Генеральный директор", "А. Б. Петров", "А.Б. Петров"},
+		"директор Департамента ДОУ Сидоров П. П.":        {"Директор Департамента ДОУ", "П. П. Сидоров", "П.П. Сидоров"},
 	} {
 		parsed := parse_Person(text)
-		if parsed.Position != want[0] || parsed.Signature != want[1] {
-			t.Fatalf("%q -> %q %q", text, parsed.Position, parsed.Signature)
+		if parsed.Position != want[0] || instruction.signature_Name(parsed) != want[1] || gost.signature_Name(parsed) != want[2] {
+			t.Fatalf("%q -> %q %q %q", text, parsed.Position, instruction.signature_Name(parsed), gost.signature_Name(parsed))
 		}
 	}
 }
 
 func TestServiceNoteDialogWithoutModel(t *testing.T) {
 	organization := test_Organization(t)
+	format := test_Format(t)
 	info, _ := Match_Request("Подготовь служебную записку о замене ноутбука")
-	step := Start_Layout(info, "Подготовь служебную записку о замене ноутбука", organization, nil, testNow)
+	step := Start_Layout(info, "Подготовь служебную записку о замене ноутбука", organization, format, nil, testNow)
 	if step.Ready || step.Field != texts.LayoutFieldAddressee || !strings.Contains(step.Question, "2. Руководитель ИТ-отдела Иванов И.И.") {
 		t.Fatalf("first step %+v", step)
 	}
@@ -116,24 +129,25 @@ func TestServiceNoteDialogWithoutModel(t *testing.T) {
 		t.Fatalf("subject from request %+v", step.State.Answers)
 	}
 	// Фамилия в дательном падеже находит должностное лицо из списка
-	step = Advance_Layout(step.State, "Иванову", organization, nil, testNow)
+	step = Advance_Layout(step.State, "Иванову", organization, format, nil, testNow)
 	if step.Field != texts.LayoutFieldAuthor || step.State.Answers[texts.LayoutFieldAddressee] != "Руководитель ИТ-отдела Иванов И.И." {
 		t.Fatalf("addressee %+v", step)
 	}
-	step = Advance_Layout(step.State, "", organization, nil, testNow)
+	step = Advance_Layout(step.State, "", organization, format, nil, testNow)
 	if step.Field != texts.LayoutFieldAuthor {
 		t.Fatalf("empty required answer accepted %+v", step)
 	}
-	step = Advance_Layout(step.State, "менеджер отдела продаж Петрова Мария Сергеевна", organization, nil, testNow)
-	step = Advance_Layout(step.State, "Ноутбук сломался 10.08.2026. Прошу выдать новый до 20.08.2026.", organization, nil, testNow)
+	step = Advance_Layout(step.State, "менеджер отдела продаж Петрова Мария Сергеевна", organization, format, nil, testNow)
+	step = Advance_Layout(step.State, "Ноутбук сломался 10.08.2026. Прошу выдать новый до 20.08.2026.", organization, format, nil, testNow)
 	if step.Field != texts.LayoutFieldAttach {
 		t.Fatalf("attachments %+v", step)
 	}
-	step = Advance_Layout(step.State, "нет", organization, nil, testNow)
+	step = Advance_Layout(step.State, "нет", organization, format, nil, testNow)
 	if !step.Ready || len(step.Docx) == 0 || step.FileName != "Служебная записка о замене ноутбука.docx" {
 		t.Fatalf("ready %+v", step)
 	}
-	for _, want := range []string{"Руководитель ИТ-отдела Иванов И.И.", "от менеджер отдела продаж", "СЛУЖЕБНАЯ ЗАПИСКА", "15.08.2026 №", "О замене ноутбука", "Прошу выдать новый до 20.08.2026.", "Менеджер отдела продаж    М.С. Петрова"} {
+	// Без модели падеж не меняется, но ФИО в шапке и подписи - по Инструкции: «И. И. Иванов»
+	for _, want := range []string{"Руководитель ИТ-отдела\nИ. И. Иванов", "от менеджер отдела продаж\nМ. С. Петрова", "СЛУЖЕБНАЯ ЗАПИСКА", "15.08.2026 №", "О замене ноутбука", "Прошу выдать новый до 20.08.2026.", "Менеджер отдела продаж    М. С. Петрова"} {
 		if !strings.Contains(step.DraftText, want) {
 			t.Fatalf("draft has no %q:\n%s", want, step.DraftText)
 		}
@@ -142,33 +156,78 @@ func TestServiceNoteDialogWithoutModel(t *testing.T) {
 	if !strings.Contains(documentXML, `w:firstLine="709"`) || !strings.Contains(documentXML, `<w:jc w:val="both"/>`) || strings.Contains(documentXML, "<w:drawing>") {
 		t.Fatal("note layout: indent, justify, no emblem")
 	}
-	if !strings.Contains(read_DocxPart(t, step.Docx, "word/styles.xml"), "Times New Roman") {
-		t.Fatal("font")
+	// Инструкция, п. 8.16: Times New Roman 13, интервал 1,15, поля 30/20/25/15 мм, номер страницы внизу справа со второй страницы
+	styles := read_DocxPart(t, step.Docx, "word/styles.xml")
+	if !strings.Contains(styles, "Times New Roman") || !strings.Contains(styles, `<w:sz w:val="26"/>`) {
+		t.Fatalf("font %s", styles)
+	}
+	for _, want := range []string{`w:line="276"`, `w:left="1701"`, `w:right="1134"`, `w:top="1417"`, `w:bottom="850"`, `<w:footerReference w:type="default"`, `<w:titlePg/>`} {
+		if !strings.Contains(documentXML, want) {
+			t.Fatalf("document has no %s", want)
+		}
+	}
+	footer := read_DocxPart(t, step.Docx, "word/footer1.xml")
+	if !strings.Contains(footer, " PAGE ") || !strings.Contains(footer, `<w:jc w:val="right"/>`) {
+		t.Fatalf("page number %s", footer)
+	}
+	if !strings.Contains(read_DocxPart(t, step.Docx, "[Content_Types].xml"), "/word/footer1.xml") {
+		t.Fatal("footer content type")
+	}
+}
+
+// Тот же документ по профилю ГОСТ: прежний вид - поля 20/10/20/20, шрифт 14, номер страницы сверху посередине
+func TestGostProfileKeepsGostLayout(t *testing.T) {
+	format := test_Format(t, "gost")
+	info, _ := Find_Layout("service-note")
+	state := State{LayoutID: info.ID, Answers: map[string]string{
+		texts.LayoutFieldAddressee: "Руководитель ИТ-отдела Иванов И.И.",
+		texts.LayoutFieldAuthor:    "менеджер отдела продаж Петрова Мария Сергеевна",
+		texts.LayoutFieldSubject:   "о замене ноутбука",
+		texts.LayoutFieldPoints:    "Прошу заменить ноутбук.",
+		texts.LayoutFieldAttach:    "",
+	}}
+	step := Advance_Layout(state, "", Organization{}, format, nil, testNow)
+	if !step.Ready || !strings.Contains(step.DraftText, "Иванов И.И.") || !strings.Contains(step.DraftText, "М.С. Петрова") {
+		t.Fatalf("gost names:\n%s", step.DraftText)
+	}
+	documentXML := read_DocxPart(t, step.Docx, "word/document.xml")
+	for _, want := range []string{`w:left="1134"`, `w:right="567"`, `w:top="1134"`, `w:bottom="1134"`, `<w:headerReference w:type="default"`} {
+		if !strings.Contains(documentXML, want) {
+			t.Fatalf("gost document has no %s", want)
+		}
+	}
+	if !strings.Contains(read_DocxPart(t, step.Docx, "word/styles.xml"), `<w:sz w:val="28"/>`) {
+		t.Fatal("gost font size")
+	}
+	if !strings.Contains(read_DocxPart(t, step.Docx, "word/header1.xml"), `<w:jc w:val="center"/>`) {
+		t.Fatal("gost page number")
 	}
 }
 
 func TestLetterUsesModelAndOrganization(t *testing.T) {
 	organization := test_Organization(t)
+	format := test_Format(t)
 	info, _ := Find_Layout("letter")
 	chat := &scriptedChat{replies: []string{
 		`{"addressee":"Сидоров","subject":"о предоставлении данных"}`,
 		"```json\n{\"addressee\":[\"Генеральному директору\",\"АО \\\"Профиль\\\"\",\"Сидорову П.П.\"],\"author\":[],\"title\":\"О предоставлении данных\",\"greeting\":\"Уважаемый Петр Петрович!\",\"text\":[\"Просим направить данные до 01.09.2026.\"]}\n```",
 	}}
-	step := Start_Layout(info, "Сделай письмо Сидорову о предоставлении данных", organization, chat, testNow)
+	step := Start_Layout(info, "Сделай письмо Сидорову о предоставлении данных", organization, format, chat, testNow)
 	if step.Field != texts.LayoutFieldPoints || step.State.Answers[texts.LayoutFieldAddressee] != "Сидоров" {
 		t.Fatalf("extracted %+v", step)
 	}
-	step = Advance_Layout(step.State, "Просим направить данные до 01.09.2026", organization, chat, testNow)
+	step = Advance_Layout(step.State, "Просим направить данные до 01.09.2026", organization, format, chat, testNow)
 	if step.Field != texts.LayoutFieldSigner || !strings.Contains(step.Question, "подпишет Генеральный директор Петров Андрей Борисович") {
 		t.Fatalf("signer question %+v", step)
 	}
-	step = Advance_Layout(step.State, "нет", organization, chat, testNow)
-	step = Advance_Layout(step.State, "нет", organization, chat, testNow)
-	step = Advance_Layout(step.State, "Петрова Мария Сергеевна, +7 (495) 123-45-67", organization, chat, testNow)
+	step = Advance_Layout(step.State, "нет", organization, format, chat, testNow)
+	step = Advance_Layout(step.State, "нет", organization, format, chat, testNow)
+	step = Advance_Layout(step.State, "Петрова Мария Сергеевна, +7 (495) 123-45-67", organization, format, chat, testNow)
 	if !step.Ready || chat.calls != 2 {
 		t.Fatalf("letter %+v calls %d", step, chat.calls)
 	}
-	for _, want := range []string{"Генеральному директору", "Уважаемый Петр Петрович!", "С уважением,", "Генеральный директор    А.Б. Петров", "+7 (495) 123-45-67"} {
+	// Адресат «П. П. Сидорову» (п. 8.12.1), исполнитель - инициалы, фамилия и телефон (п. 8.25 Инструкции)
+	for _, want := range []string{"Генеральному директору", "П. П. Сидорову", "Уважаемый Петр Петрович!", "С уважением,", "Генеральный директор    А. Б. Петров", "М. С. Петрова, +7 (495) 123-45-67"} {
 		if !strings.Contains(step.DraftText, want) {
 			t.Fatalf("letter has no %q:\n%s", want, step.DraftText)
 		}
@@ -179,6 +238,10 @@ func TestLetterUsesModelAndOrganization(t *testing.T) {
 	documentXML := read_DocxPart(t, step.Docx, "word/document.xml")
 	if strings.Count(documentXML, "<w:drawing>") != 2 || !strings.Contains(documentXML, "<w:tbl>") {
 		t.Fatal("letter blank: emblem, stamp and two columns")
+	}
+	// Отметка об исполнителе - в левом нижнем углу последней страницы
+	if !strings.Contains(documentXML, `w:yAlign="bottom"`) || !strings.Contains(documentXML, `w:xAlign="left"`) {
+		t.Fatal("executor at the page bottom")
 	}
 	if len(read_DocxPart(t, step.Docx, "word/media/image1.png")) == 0 || !strings.Contains(read_DocxPart(t, step.Docx, "word/_rels/document.xml.rels"), "media/image2.png") {
 		t.Fatal("images in package")
@@ -192,7 +255,7 @@ func TestComposeFallsBackOnInventedNumber(t *testing.T) {
 		texts.LayoutFieldPoints:  "Прошу заменить ноутбук.",
 	}}
 	chat := &scriptedChat{replies: []string{`{"addressee":[],"author":[],"title":"О замене ноутбука","greeting":"","text":["Прошу заменить ноутбук до 25.08.2026."]}`}}
-	composed := compose_Parts(info, state, chat, "15.08.2026")
+	composed := compose_Parts(info, state, chat, "15.08.2026", test_Format(t))
 	if len(composed.Text) != 1 || composed.Text[0] != "Прошу заменить ноутбук." {
 		t.Fatalf("invented date kept %+v", composed)
 	}
@@ -200,6 +263,7 @@ func TestComposeFallsBackOnInventedNumber(t *testing.T) {
 
 func TestProtocolAndActSignatures(t *testing.T) {
 	organization := test_Organization(t)
+	format := test_Format(t)
 	protocol, _ := Find_Layout("protocol")
 	state := State{LayoutID: protocol.ID, Answers: map[string]string{
 		texts.LayoutFieldSubject:   "совещания по внедрению ИИС ДО",
@@ -210,16 +274,24 @@ func TestProtocolAndActSignatures(t *testing.T) {
 		texts.LayoutFieldAgenda:    "О сроках внедрения; О обучении",
 		texts.LayoutFieldPoints:    "СЛУШАЛИ: Сидорова П.П. ПОСТАНОВИЛИ: начать обучение.",
 	}}
-	step := Advance_Layout(state, "", organization, nil, testNow)
-	for _, want := range []string{"ПРОТОКОЛ", "Председатель - директор Департамента ДОУ Сидоров П.П.", "1. О сроках внедрения", "2. О обучении", "Председатель    П.П. Сидоров", "Секретарь    А.О. Кузнецова"} {
+	step := Advance_Layout(state, "", organization, format, nil, testNow)
+	for _, want := range []string{"ПРОТОКОЛ", "Председатель - директор Департамента ДОУ Сидоров П.П.", "1. О сроках внедрения", "2. О обучении", "Председатель    П. П. Сидоров", "Секретарь    А. О. Кузнецова"} {
 		if !strings.Contains(step.DraftText, want) {
 			t.Fatalf("protocol has no %q:\n%s", want, step.DraftText)
 		}
 	}
 	act, _ := Find_Layout("act")
-	signatures := committee_Signatures("член комиссии Орлов А.А.; председатель комиссии Белов Б.Б.; Зайцев В.В.")
-	if len(signatures) != 3 || signatures[0].Name != "Б.Б. Белов" || signatures[1].Position != texts.LayoutCommitteeSign || signatures[2].Name != "В.В. Зайцев" {
+	// Инструкция, п. 8.19.2: «Председатель комиссии», «Член комиссии» у каждого члена
+	committee := "член комиссии Орлов А.А.; председатель комиссии Белов Б.Б.; Зайцев В.В."
+	signatures := committee_Signatures(format, committee)
+	if len(signatures) != 3 || signatures[0].Position != texts.LayoutCommitteeChairSign || signatures[0].Name != "Б. Б. Белов" ||
+		signatures[1].Position != texts.LayoutCommitteeMemberSign || signatures[2].Position != texts.LayoutCommitteeMemberSign || signatures[2].Name != "В. В. Зайцев" {
 		t.Fatalf("committee %+v", signatures)
+	}
+	// ГОСТ: «Члены комиссии» один раз над подписями
+	gostSignatures := committee_Signatures(test_Format(t, "gost"), committee)
+	if gostSignatures[1].Position != texts.LayoutCommitteeSign || gostSignatures[2].Position != "" || gostSignatures[2].Name != "В.В. Зайцев" {
+		t.Fatalf("gost committee %+v", gostSignatures)
 	}
 	if act.Kind != texts.LayoutKindAct {
 		t.Fatal("act kind")
@@ -227,7 +299,7 @@ func TestProtocolAndActSignatures(t *testing.T) {
 }
 
 func TestAdvanceCancels(t *testing.T) {
-	step := Advance_Layout(State{LayoutID: "service-note", Field: texts.LayoutFieldAuthor}, "отмена", Organization{}, nil, testNow)
+	step := Advance_Layout(State{LayoutID: "service-note", Field: texts.LayoutFieldAuthor}, "отмена", Organization{}, test_Format(t), nil, testNow)
 	if !step.Cancelled {
 		t.Fatalf("cancel %+v", step)
 	}
@@ -269,22 +341,27 @@ func TestTitleAndHeaderNormalization(t *testing.T) {
 			t.Fatalf("%q -> %q", title, got)
 		}
 	}
-	letter := normalize_HeaderLines([]string{"Генеральному директору Сидорову Петру Петровичу", `АО "Профиль"`}, true)
-	if strings.Join(letter, "|") != `АО "Профиль"|Генеральному директору|Сидорову П.П.` {
+	// Инструкция, п. 8.12.1: «И. И. Иванову». Профиль ГОСТ оставляет «Иванову И.И.»
+	format, gost := test_Format(t), test_Format(t, "gost")
+	letter := normalize_HeaderLines(format, []string{"Генеральному директору Сидорову Петру Петровичу", `АО "Профиль"`}, true)
+	if strings.Join(letter, "|") != `АО "Профиль"|Генеральному директору|П. П. Сидорову` {
 		t.Fatalf("letter addressee %q", letter)
 	}
-	author := normalize_HeaderLines([]string{"от менеджера отдела продаж Петровой Марии Сергеевны"}, false)
-	if strings.Join(author, "|") != "от менеджера отдела продаж|Петровой М.С." {
+	author := normalize_HeaderLines(format, []string{"от менеджера отдела продаж Петровой Марии Сергеевны"}, false)
+	if strings.Join(author, "|") != "от менеджера отдела продаж|М. С. Петровой" {
 		t.Fatalf("author %q", author)
 	}
-	if kept := normalize_HeaderLines([]string{"Руководителю ИТ-отдела", "Иванову И.И."}, false); strings.Join(kept, "|") != "Руководителю ИТ-отдела|Иванову И.И." {
+	if kept := normalize_HeaderLines(format, []string{"Руководителю ИТ-отдела", "Иванову И.И."}, false); strings.Join(kept, "|") != "Руководителю ИТ-отдела|И. И. Иванову" {
 		t.Fatalf("kept %q", kept)
+	}
+	if gostLines := normalize_HeaderLines(gost, []string{"Руководителю ИТ-отдела", "И. И. Иванову"}, false); strings.Join(gostLines, "|") != "Руководителю ИТ-отдела|Иванову И.И." {
+		t.Fatalf("gost header %q", gostLines)
 	}
 	// Заголовок модели без «О» заменяется темой из ответов
 	info, _ := Find_Layout("letter")
 	state := State{LayoutID: info.ID, Answers: map[string]string{texts.LayoutFieldSubject: "о предоставлении данных", texts.LayoutFieldPoints: "Просим направить данные."}}
 	chat := &scriptedChat{replies: []string{`{"addressee":[],"author":[],"title":"Запрос данных от Организации","greeting":"","text":["Просим направить данные."]}`}}
-	if composed := compose_Parts(info, state, chat, "15.08.2026"); composed.Title != "О предоставлении данных" {
+	if composed := compose_Parts(info, state, chat, "15.08.2026", format); composed.Title != "О предоставлении данных" {
 		t.Fatalf("title %q", composed.Title)
 	}
 }

@@ -7,15 +7,15 @@ import (
 )
 
 // Должность и ФИО из одной строки: «менеджер отдела продаж Петрова Мария Сергеевна» -
-// должность «Менеджер отдела продаж», подпись «М.С. Петрова» (п. 5.22 ГОСТ: между инициалами пробела нет)
+// должность «Менеджер отдела продаж», фамилия «Петрова», буквы инициалов «М», «С».
+// Как записать инициалы и в каком порядке с фамилией, решают правила оформления (format.go)
 type person struct {
 	Position string
 	// Должность как написана, без прописной в начале: «от менеджера отдела продаж»
 	PositionRaw string
 	Surname     string
-	Initials    string
+	Initials    []string
 	FullName    string
-	Signature   string
 }
 
 func parse_Person(text string) person {
@@ -42,34 +42,39 @@ func parse_Person(text string) person {
 		return result
 	}
 	result.FullName = strings.Join(nameTokens, " ")
-	var surname string
-	var initials strings.Builder
 	if check_IsInitials(nameTokens[0]) {
 		// «И.О. Фамилия» или «И. О. Фамилия»: фамилия - последнее полное слово
 		for _, token := range nameTokens {
 			if check_IsInitials(token) {
-				initials.WriteString(token)
+				result.Initials = append(result.Initials, initial_Letters(token)...)
 				continue
 			}
-			surname = token
+			result.Surname = token
 		}
-	} else {
-		// «Фамилия Имя Отчество» или «Фамилия И.О.»
-		surname = nameTokens[0]
-		for _, token := range nameTokens[1:] {
-			if check_IsInitials(token) {
-				initials.WriteString(token)
-				continue
-			}
-			first, _ := utf8.DecodeRuneInString(token)
-			initials.WriteRune(first)
-			initials.WriteString(".")
+		return result
+	}
+	// «Фамилия Имя Отчество» или «Фамилия И.О.»
+	result.Surname = nameTokens[0]
+	for _, token := range nameTokens[1:] {
+		if check_IsInitials(token) {
+			result.Initials = append(result.Initials, initial_Letters(token)...)
+			continue
+		}
+		first, _ := utf8.DecodeRuneInString(token)
+		result.Initials = append(result.Initials, string(first))
+	}
+	return result
+}
+
+// «И.О.» -> «И», «О»
+func initial_Letters(token string) []string {
+	letters := []string{}
+	for _, symbol := range token {
+		if unicode.IsUpper(symbol) {
+			letters = append(letters, string(symbol))
 		}
 	}
-	result.Surname = surname
-	result.Initials = initials.String()
-	result.Signature = strings.TrimSpace(result.Initials + " " + surname)
-	return result
+	return letters
 }
 
 func check_IsNamePart(token string) bool {

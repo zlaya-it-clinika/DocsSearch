@@ -66,7 +66,8 @@ func TestLayoutDialogInStubChat(t *testing.T) {
 			documentXML = string(raw)
 		}
 	}
-	if !strings.Contains(documentXML, "Иванов И.И.") || !strings.Contains(documentXML, "М.С. Петрова") {
+	// ФИО по Инструкции по ДОУ (п. 8.12.1, 8.19.2): инициалы перед фамилией, между инициалами пробел
+	if !strings.Contains(documentXML, "И. И. Иванов") || !strings.Contains(documentXML, "М. С. Петрова") {
 		t.Fatal("document has no addressee or signature")
 	}
 

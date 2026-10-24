@@ -13,7 +13,8 @@ import (
 	"docssearch/core/internal/texts"
 )
 
-// Макеты документов в чате: служебная записка, письмо, акт и другие по ГОСТ Р 7.0.97-2025.
+// Макеты документов в чате: служебная записка, письмо, акт и другие. Оформление - по Инструкции по ДОУ,
+// о чем она молчит - по ГОСТ Р 7.0.97-2025 (профили internal/layout/formats).
 // Реквизиты организации (должностные лица, герб, штамп) - из вкладки «Организация»
 
 // Состояние шаблона в сессии: бланк модуля и макет. Ключ layout не мешает старым сессиям с одним бланком
@@ -43,7 +44,7 @@ func decode_LayoutState(raw []byte) layout.State {
 
 // Шаг макета, если реплика к нему относится: макет уже готовится или это просьба подготовить документ.
 // Пока заполняется бланк модуля, макет не перехватывает ответы. loadOrganization вызывается, только если реплика - про макет
-func advance_LayoutTurn(session *sessionRecord, text string, loadOrganization func() (layout.Organization, error), chatter layout.Chatter, now time.Time) (layout.Step, bool, error) {
+func advance_LayoutTurn(session *sessionRecord, text string, loadOrganization func() (layout.Organization, error), format layout.Format, chatter layout.Chatter, now time.Time) (layout.Step, bool, error) {
 	if session.blankFill.BlankID != "" {
 		return layout.Step{}, false, nil
 	}
@@ -57,13 +58,13 @@ func advance_LayoutTurn(session *sessionRecord, text string, loadOrganization fu
 		if err != nil {
 			return layout.Step{}, false, err
 		}
-		step = layout.Start_Layout(matched, text, organization, chatter, now)
+		step = layout.Start_Layout(matched, text, organization, format, chatter, now)
 	} else {
 		organization, err := loadOrganization()
 		if err != nil {
 			return layout.Step{}, false, err
 		}
-		step = layout.Advance_Layout(session.layoutFill, text, organization, chatter, now)
+		step = layout.Advance_Layout(session.layoutFill, text, organization, format, chatter, now)
 	}
 	session.layoutFill = step.State
 	session.templateStep = templateStepIdle

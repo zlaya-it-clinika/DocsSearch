@@ -29,6 +29,9 @@ type Config struct {
 	StubWithoutUsers bool
 	// Начальные настройки входа. После сохранения в админ-панели действуют значения из базы
 	AuthDefaults auth.Settings
+	// LAYOUT_FORMAT_PRIORITY: профили оформления макетов через запятую, первый важнее (instruction,gost).
+	// Пусто - порядок задают сами профили: Инструкция по ДОУ, затем ГОСТ
+	LayoutFormatPriority []string
 }
 
 func Load() Config {
@@ -53,6 +56,7 @@ func Load() Config {
 		OllamaEmbedDimensions: read_EmbedDimensions(),
 		StubWithoutUsers:      !read_Boolean("STUB_SEED_USERS", true),
 		AuthDefaults:          read_AuthDefaults(),
+		LayoutFormatPriority:  read_List("LAYOUT_FORMAT_PRIORITY"),
 	}
 }
 
@@ -102,6 +106,17 @@ func read_String(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// Значения через запятую без пустых
+func read_List(name string) []string {
+	values := []string{}
+	for _, value := range strings.Split(os.Getenv(name), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func read_Boolean(name string, fallback bool) bool {
