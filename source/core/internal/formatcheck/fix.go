@@ -37,7 +37,7 @@ type FixResult struct {
 	Applied []string
 }
 
-func Fix_Docx(body []byte, format layout.Format) (FixResult, error) {
+func Fix_Docx(body []byte, format layout.Format, options FixOptions) (FixResult, error) {
 	info, err := read_Document(body)
 	if err != nil {
 		return FixResult{}, err
@@ -48,7 +48,7 @@ func Fix_Docx(body []byte, format layout.Format) (FixResult, error) {
 	}
 	files := map[string][]byte{}
 	for _, entry := range archive.File {
-		if !strings.HasSuffix(entry.Name, ".xml") {
+		if !strings.HasSuffix(entry.Name, ".xml") && !strings.HasSuffix(entry.Name, ".rels") {
 			continue
 		}
 		reader, err := entry.Open()
@@ -62,12 +62,14 @@ func Fix_Docx(body []byte, format layout.Format) (FixResult, error) {
 		}
 		files[entry.Name] = raw
 	}
-	fixer := &fixer{format: format, info: info, sheet: read_StyleSheet(files["word/styles.xml"], files["word/theme/theme1.xml"]), applied: map[string]bool{}}
+	fixer := &fixer{format: format, info: info, options: options, sheet: read_StyleSheet(files["word/styles.xml"], files["word/theme/theme1.xml"]), applied: map[string]bool{}}
+	fixer.plan_PageNumber(files)
 	document, err := fixer.fix_Document(files["word/document.xml"])
 	if err != nil {
 		return FixResult{}, err
 	}
 	files["word/document.xml"] = document
+	added := fixer.add_PageNumberPart(files)
 	if styles, found := files["word/styles.xml"]; found {
 		files["word/styles.xml"] = fixer.fix_Styles(styles)
 	}
@@ -107,6 +109,15 @@ func Fix_Docx(body []byte, format layout.Format) (FixResult, error) {
 			return FixResult{}, err
 		}
 	}
+	for name, raw := range added {
+		target, err := writer.Create(name)
+		if err != nil {
+			return FixResult{}, err
+		}
+		if _, err := target.Write(raw); err != nil {
+			return FixResult{}, err
+		}
+	}
 	if err := writer.Close(); err != nil {
 		return FixResult{}, err
 	}
@@ -116,8 +127,12 @@ func Fix_Docx(body []byte, format layout.Format) (FixResult, error) {
 type fixer struct {
 	format  layout.Format
 	info    documentInfo
+	options FixOptions
 	sheet   styleSheet
 	applied map[string]bool
+	// Номер страницы добавляется отдельным колонтитулом: его часть и связь в document.xml.rels
+	pageNumberPart  string
+	pageNumberAdded bool
 }
 
 func (fixer *fixer) applied_Texts() []string {
@@ -129,6 +144,8 @@ func (fixer *fixer) applied_Texts() []string {
 		{"font", texts.FormatFixFont}, {"size", texts.FormatFixSize}, {"spacing", texts.FormatFixSpacing},
 		{"align", texts.FormatFixAlign}, {"indent", texts.FormatFixIndent}, {"pageNumber", texts.FormatFixPageNumber},
 		{"dates", texts.FormatFixDates}, {"initials", texts.FormatFixInitials},
+		{"addressee", texts.FormatFixAddressee}, {"title", texts.FormatFixTitle}, {"signature", texts.FormatFixSignature},
+		{"pageNumberAdded", texts.FormatFixPageNumberAdded},
 	}
 	applied := []string{}
 	for _, item := range order {
@@ -150,6 +167,8 @@ func (fixer *fixer) fix_Document(raw []byte) ([]byte, error) {
 	}
 	edits := []xmlEdit{}
 	edited := []xmlSpan{}
+	// Вставки реквизитов: позиция в исходном тексте и что вставить перед ней
+	firstBody := -1
 	for _, span := range spans {
 		if span.Name != "p" || !span.has_Ancestor("body") || span.has_Ancestor("tbl") || span.has_Ancestor("p") || span.has_Ancestor("txbxContent") {
 			continue
@@ -160,10 +179,13 @@ func (fixer *fixer) fix_Document(raw []byte) ([]byte, error) {
 			continue
 		}
 		resolved := fixer.sheet.resolve_Paragraph(paragraph, false)
-		if utf8.RuneCountInString(resolved.Text) < texts.FormatBodyParagraphRunes || check_UpperText(resolved.Text) {
+		if !check_TextParagraph(resolved) {
 			continue
 		}
-		fixed, changed, err := fixer.fix_BodyParagraph(fragment, resolved)
+		if firstBody < 0 && check_BodyParagraph(resolved) {
+			firstBody = span.Start
+		}
+		fixed, changed, err := fixer.fix_BodyParagraph(fragment, resolved, check_BodyParagraph(resolved))
 		if err != nil || !changed {
 			continue
 		}
@@ -183,10 +205,12 @@ func (fixer *fixer) fix_Document(raw []byte) ([]byte, error) {
 		if inside {
 			continue
 		}
-		if fixed, changed := fixer.fix_Section(string(raw[span.Start:span.End])); changed {
+		bodyLevel := len(span.Path) > 0 && span.Path[len(span.Path)-1] == "body"
+		if fixed, changed := fixer.fix_Section(string(raw[span.Start:span.End]), bodyLevel); changed {
 			edits = append(edits, xmlEdit{Start: span.Start, End: span.End, Text: fixed})
 		}
 	}
+	edits = fixer.insert_Requisites(raw, spans, firstBody, edits)
 	result := apply_Edits(raw, edits)
 	result = fixer.fix_Fonts(result)
 	return fixer.fix_Text(result), nil
@@ -204,7 +228,7 @@ func read_ParagraphFragment(fragment string) (xParagraph, bool) {
 	return wrapper.Paragraph, true
 }
 
-func (fixer *fixer) fix_Section(raw string) (string, bool) {
+func (fixer *fixer) fix_Section(raw string, bodyLevel bool) (string, bool) {
 	format := fixer.format
 	props, err := parse_Props(raw, sectionPropsOrder)
 	if err != nil {
@@ -250,8 +274,21 @@ func (fixer *fixer) fix_Section(raw string) (string, bool) {
 		fixer.applied["margins"] = true
 		changed = true
 	}
+	// Номера страниц нет совсем: колонтитул с номером по правилам на все страницы раздела
+	if bodyLevel && fixer.pageNumberPart != "" {
+		kind := "footerReference"
+		if format.PageNumberPart == "header" {
+			kind = "headerReference"
+		}
+		if !strings.Contains(raw, "<w:"+kind+` w:type="default"`) {
+			props.Children = append([]xmlChild{{Name: kind, Raw: `<w:` + kind + ` w:type="default" r:id="` + pageNumberRelation + `"/>`}}, props.Children...)
+			fixer.pageNumberAdded = true
+			fixer.applied["pageNumberAdded"] = true
+			changed = true
+		}
+	}
 	// Номер не на первой странице: отдельный колонтитул первой страницы, у которого номера нет
-	if !format.PageNumberOnFirstPage && len(fixer.info.PageNumbers) > 0 {
+	if !format.PageNumberOnFirstPage && (len(fixer.info.PageNumbers) > 0 || fixer.pageNumberAdded) {
 		if titlePage := props.get("titlePg"); titlePage == "" || !check_OnOff(&xOnOff{Val: optional_Attribute(titlePage, "w:val")}) {
 			props.set("titlePg", `<w:titlePg/>`)
 			fixer.applied["firstPage"] = true
@@ -269,8 +306,8 @@ func optional_Attribute(raw, key string) *string {
 	return &value
 }
 
-// Абзац основного текста: выравнивание, интервал, отступ, размер шрифта
-func (fixer *fixer) fix_BodyParagraph(fragment string, resolved paragraphInfo) (string, bool, error) {
+// Абзац с текстом: размер шрифта. Абзац основного текста (body) - еще выравнивание, интервал и отступ
+func (fixer *fixer) fix_BodyParagraph(fragment string, resolved paragraphInfo, body bool) (string, bool, error) {
 	format := fixer.format
 	spans, err := scan_Elements([]byte(fragment))
 	if err != nil {
@@ -294,6 +331,9 @@ func (fixer *fixer) fix_BodyParagraph(fragment string, resolved paragraphInfo) (
 		return fragment, false, err
 	}
 	propsChanged := false
+	if !body {
+		format.TextAlign, format.TextLineSpacing, format.FirstLineIndentMM = "", 0, 0
+	}
 	if format.TextAlign == "both" && !justifiedAligns[resolved.Align] {
 		props.set("jc", `<w:jc w:val="both"/>`)
 		fixer.applied["align"] = true
@@ -556,4 +596,122 @@ func two_Digits(value int) string {
 		return "0" + strconv.Itoa(value)
 	}
 	return strconv.Itoa(value)
+}
+
+const (
+	pageNumberRelation = "rIdDocsSearchPage"
+	pageNumberRelType  = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+	pageNumberMimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml."
+)
+
+// Номера страницы нет, а текст длиннее страницы: колонтитул с номером будет добавлен.
+// Нужен префикс r: в document.xml - через него sectPr ссылается на колонтитул
+func (fixer *fixer) plan_PageNumber(files map[string][]byte) {
+	format := fixer.format
+	if len(fixer.info.PageNumbers) > 0 || format.PageNumberPart == "" || !bytes.Contains(files["word/document.xml"], []byte(`xmlns:r=`)) ||
+		files["word/_rels/document.xml.rels"] == nil || files["[Content_Types].xml"] == nil {
+		return
+	}
+	characters := 0
+	for _, paragraph := range fixer.info.Paragraphs {
+		characters += utf8.RuneCountInString(paragraph.Text)
+	}
+	if characters <= texts.FormatPageRunes {
+		return
+	}
+	fixer.pageNumberPart = "word/" + format.PageNumberPart + "DocsSearch.xml"
+}
+
+// Часть колонтитула с полем PAGE, связь и тип содержимого. Возвращает новые файлы архива
+func (fixer *fixer) add_PageNumberPart(files map[string][]byte) map[string][]byte {
+	if !fixer.pageNumberAdded {
+		return nil
+	}
+	format := fixer.format
+	root, kind := "w:ftr", "footer"
+	if format.PageNumberPart == "header" {
+		root, kind = "w:hdr", "header"
+	}
+	align := format.PageNumberAlign
+	if align == "" {
+		align = "right"
+	}
+	runProps := fixer.run_Props()
+	part := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+		`<` + root + ` xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+		`<w:p><w:pPr><w:jc w:val="` + align + `"/></w:pPr>` +
+		`<w:r>` + runProps + `<w:fldChar w:fldCharType="begin"/></w:r>` +
+		`<w:r>` + runProps + `<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>` +
+		`<w:r>` + runProps + `<w:fldChar w:fldCharType="separate"/></w:r>` +
+		`<w:r>` + runProps + `<w:t>2</w:t></w:r>` +
+		`<w:r>` + runProps + `<w:fldChar w:fldCharType="end"/></w:r></w:p></` + root + `>`
+	target := strings.TrimPrefix(fixer.pageNumberPart, "word/")
+	relation := `<Relationship Id="` + pageNumberRelation + `" Type="` + pageNumberRelType + kind + `" Target="` + target + `"/>`
+	files["word/_rels/document.xml.rels"] = bytes.Replace(files["word/_rels/document.xml.rels"], []byte("</Relationships>"), []byte(relation+"</Relationships>"), 1)
+	override := `<Override PartName="/` + fixer.pageNumberPart + `" ContentType="` + pageNumberMimeType + kind + `+xml"/>`
+	files["[Content_Types].xml"] = bytes.Replace(files["[Content_Types].xml"], []byte("</Types>"), []byte(override+"</Types>"), 1)
+	return map[string][]byte{fixer.pageNumberPart: []byte(part)}
+}
+
+// Адресат в начало, заголовок перед первым абзацем основного текста, подпись в конец перед параметрами страницы.
+// Вставка в позицию, с которой начинается другая правка, дописывается в начало этой правки
+func (fixer *fixer) insert_Requisites(raw []byte, spans []xmlSpan, firstBody int, edits []xmlEdit) []xmlEdit {
+	options := fixer.options
+	inserts := []xmlEdit{}
+	bodyStart, bodyEnd, sectionStart := -1, -1, -1
+	for _, span := range spans {
+		if span.Name == "body" {
+			bodyStart = span.Start + len(openTag.FindString(string(raw[span.Start:])))
+			bodyEnd = span.End - len("</w:body>")
+		}
+		if span.Name == "sectPr" && len(span.Path) > 0 && span.Path[len(span.Path)-1] == "body" {
+			sectionStart = span.Start
+		}
+	}
+	if bodyStart < 0 {
+		return edits
+	}
+	if len(options.Addressee) > 0 {
+		inserts = append(inserts, xmlEdit{Start: bodyStart, End: bodyStart, Text: fixer.addressee_XML(options.Addressee)})
+		fixer.applied["addressee"] = true
+	}
+	if title := strings.TrimSpace(options.Title); title != "" {
+		at := firstBody
+		if at < 0 {
+			at = bodyStart
+		}
+		inserts = append(inserts, xmlEdit{Start: at, End: at, Text: fixer.title_XML(title)})
+		fixer.applied["title"] = true
+	}
+	if strings.TrimSpace(options.SignerName) != "" {
+		at := sectionStart
+		if at < 0 {
+			at = bodyEnd
+		}
+		inserts = append(inserts, xmlEdit{Start: at, End: at, Text: fixer.signature_XML(options.SignerPosition, options.SignerName)})
+		fixer.applied["signature"] = true
+	}
+	// Вставки в одну позицию склеиваются по порядку: адресат, затем заголовок
+	grouped := []xmlEdit{}
+	for _, insert := range inserts {
+		if last := len(grouped) - 1; last >= 0 && grouped[last].Start == insert.Start {
+			grouped[last].Text += insert.Text
+			continue
+		}
+		grouped = append(grouped, insert)
+	}
+	for _, insert := range grouped {
+		merged := false
+		for index := range edits {
+			if edits[index].Start == insert.Start {
+				edits[index].Text = insert.Text + edits[index].Text
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			edits = append(edits, insert)
+		}
+	}
+	return edits
 }

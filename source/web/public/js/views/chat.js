@@ -1,7 +1,7 @@
 // Экран чата: история сессии, отправка вопросов, проверка черновика.
 // Один и тот же экран работает на полной странице и в виджете (compact).
 import { check_Draft, create_ChatSession, fetch_ChatSession, fix_DraftFormat, send_ChatMessage, upload_SessionAttachment } from '../api.js';
-import { open_Confirm } from '../components/confirm.js';
+import { open_FormatFixDialog } from '../components/format-fix-dialog.js';
 import { show_Toast } from '../components/toast.js';
 import { create_ModeSwitch } from '../components/mode-switch.js';
 import { create_ProcessPicker } from '../components/process-picker.js';
@@ -425,6 +425,8 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 				formatChecked: payload?.formatChecked !== false,
 				// Файл остается только в этом окне: по нему исправляется оформление
 				sourceFile: file,
+				// Каких реквизитов нет и кого предложить: вопросы перед исправлением
+				requisites: payload?.requisites ?? null,
 				reveal: true,
 			});
 		} catch (error) {
@@ -444,12 +446,8 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		if (!file || pending) {
 			return;
 		}
-		const confirmed = await open_Confirm({
-			title: ChatTexts.formatFixConfirmTitle,
-			text: ChatTexts.formatFixConfirmText,
-			confirmLabel: ChatTexts.formatFixConfirm,
-		});
-		if (!confirmed) {
+		const answers = await open_FormatFixDialog(checkMessage.requisites);
+		if (!answers) {
 			return;
 		}
 		checkMessage.fixRequested = true;
@@ -458,7 +456,7 @@ export function create_ChatView({ sessionId = null, user, config, history, compa
 		render_View();
 		scroll_ToBottom();
 		try {
-			const payload = await fix_DraftFormat(file);
+			const payload = await fix_DraftFormat(file, answers);
 			messages.push({
 				role: 'assistant',
 				kind: MessageKinds.draftFix,

@@ -35,7 +35,11 @@ var (
 	initialsSpaced = regexp.MustCompile(`(^|[^\p{L}])([А-ЯЁ]\.\s+[А-ЯЁ]\.\s?[А-ЯЁ][а-яё]+)`)
 	templateLines  = regexp.MustCompile(`_{3,}`)
 	// «№ ______» в реквизите даты и номера - место для номера при регистрации, это не остаток шаблона
-	numberLine      = regexp.MustCompile(`№\s*_{3,}`)
+	numberLine = regexp.MustCompile(`№\s*_{3,}`)
+	// Предложение заканчивается точкой, знаком вопроса или восклицания, многоточием, «;» или «:»
+	sentenceEnd = regexp.MustCompile(`[.!?;:…»)"]$`)
+	// Отметка об исполнителе: «Исп.», «Исполнитель» или ФИО с телефоном
+	executorLine    = regexp.MustCompile(`(?i)^(исп\.|исполнитель)|^\S+(\s\S+){0,3},?\s*(тел\.?\s*)?\+?[78]?\s?\(?\d{3,4}\)?[\s-]?\d{2,3}-?\d{2}-?\d{2}$`)
 	templateMarks   = regexp.MustCompile(`\[\d+\]`)
 	templateColors  = map[string]bool{"FF0000": true, "C00000": true, "EE0000": true}
 	alignTitles     = map[string]string{"left": texts.FormatAlignLeft, "start": texts.FormatAlignLeft, "right": texts.FormatAlignRight, "end": texts.FormatAlignRight, "center": texts.FormatAlignCenter}
@@ -52,6 +56,8 @@ const (
 	maxTextLineSpacing = 1.5
 	// Числа пишутся с десятичной запятой, поэтому список значений - через точку с запятой
 	valueSeparator = "; "
+	// Левый отступ больше этого - строка в правой зоне листа (адресат), не основной текст
+	addresseeIndentMM = 40
 )
 
 func Check_Docx(body []byte, format layout.Format) ([]Finding, error) {
@@ -66,6 +72,7 @@ func Check_Docx(body []byte, format layout.Format) ([]Finding, error) {
 	checker.check_PageNumbers(info)
 	checker.check_Text(info)
 	checker.check_Template(info)
+	checker.check_Requisites(info)
 	// Нарушения правил первыми, затем замечания, внутри - в порядке проверок
 	sort.SliceStable(checker.findings, func(left, right int) bool {
 		return checker.findings[left].Level == texts.FormatLevelError && checker.findings[right].Level != texts.FormatLevelError
@@ -169,7 +176,7 @@ func (checker *checker) check_BodyText(info documentInfo) {
 	var sizeCount, spacingCount, alignCount, indentCount int
 	var sizeExample, spacingExample, alignExample, indentExample string
 	for _, paragraph := range info.Paragraphs {
-		if paragraph.InTable || utf8.RuneCountInString(paragraph.Text) < texts.FormatBodyParagraphRunes || check_UpperText(paragraph.Text) {
+		if !check_TextParagraph(paragraph) {
 			continue
 		}
 		example := short_Text(paragraph.Text)
@@ -188,6 +195,10 @@ func (checker *checker) check_BodyText(info documentInfo) {
 				sizeCount++
 				sizeExample = first_NonEmpty(sizeExample, example)
 			}
+		}
+		// Интервал, выравнивание и отступ - только у абзацев основного текста, реквизиты и списки оформлены иначе
+		if !check_BodyParagraph(paragraph) {
+			continue
 		}
 		if format.TextLineSpacing > 0 && paragraph.LineSpacing > 0 &&
 			(paragraph.LineSpacing < format.TextLineSpacing-spacingTolerance || paragraph.LineSpacing > maxTextLineSpacing+spacingTolerance) {
@@ -329,6 +340,26 @@ func (checker *checker) check_Template(info documentInfo) {
 	if lines != "" {
 		add(texts.FormatLevelRemark, texts.FormatTemplateLines, lines)
 	}
+}
+
+// Абзац с текстом вне таблицы. Отметка об исполнителе набирается шрифтом меньше, ее размер не проверяется
+func check_TextParagraph(paragraph paragraphInfo) bool {
+	text := strings.TrimSpace(paragraph.Text)
+	return !paragraph.InTable && text != "" && !executorLine.MatchString(text)
+}
+
+// Основной текст: предложение или длинный абзац. Не основной текст - заголовок прописными,
+// строка по центру или справа, адресат в правой зоне, пункт списка, абзац с выступом
+func check_BodyParagraph(paragraph paragraphInfo) bool {
+	text := strings.TrimSpace(paragraph.Text)
+	if !check_TextParagraph(paragraph) || check_UpperText(text) || paragraph.Numbered || paragraph.FirstLineMM < 0 || paragraph.LeftMM > addresseeIndentMM {
+		return false
+	}
+	switch paragraph.Align {
+	case "center", "right", "end":
+		return false
+	}
+	return sentenceEnd.MatchString(text) || utf8.RuneCountInString(text) >= texts.FormatBodyParagraphRunes
 }
 
 // «5.6.2024», «05.6.2024» - день или месяц одной цифрой. Номера пунктов «3.2.1» сюда не попадают: в дате год из 2 или 4 цифр

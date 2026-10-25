@@ -43,15 +43,18 @@ type xSpacing struct {
 type xIndent struct {
 	FirstLine string `xml:"firstLine,attr"`
 	Hanging   string `xml:"hanging,attr"`
+	Left      string `xml:"left,attr"`
+	Start     string `xml:"start,attr"`
 }
 
 type xParagraphProps struct {
-	Style   *xVal      `xml:"pStyle"`
-	Align   *xVal      `xml:"jc"`
-	Spacing *xSpacing  `xml:"spacing"`
-	Indent  *xIndent   `xml:"ind"`
-	Run     *xRunProps `xml:"rPr"`
-	Section *xSection  `xml:"sectPr"`
+	Style     *xVal      `xml:"pStyle"`
+	Align     *xVal      `xml:"jc"`
+	Spacing   *xSpacing  `xml:"spacing"`
+	Indent    *xIndent   `xml:"ind"`
+	Run       *xRunProps `xml:"rPr"`
+	Section   *xSection  `xml:"sectPr"`
+	Numbering *struct{}  `xml:"numPr"`
 }
 
 type xRun struct {
@@ -206,7 +209,11 @@ type paragraphInfo struct {
 	LineSpacing float64
 	FirstLineMM float64
 	HasIndent   bool
-	Runs        []runInfo
+	// Левый отступ абзаца: адресат в правой зоне листа
+	LeftMM float64
+	// Пункт нумерованного или маркированного списка
+	Numbered bool
+	Runs     []runInfo
 }
 
 type runInfo struct {
@@ -439,6 +446,8 @@ type paragraphState struct {
 	lineSpacing float64
 	firstLineMM float64
 	hasIndent   bool
+	leftMM      float64
+	numbered    bool
 }
 
 func (state *paragraphState) apply(props *xParagraphProps) {
@@ -459,7 +468,13 @@ func (state *paragraphState) apply(props *xParagraphProps) {
 			state.lineSpacing = 0
 		}
 	}
+	if props.Numbering != nil {
+		state.numbered = true
+	}
 	if props.Indent != nil {
+		if left := first_NonEmpty(props.Indent.Left, props.Indent.Start); left != "" {
+			state.leftMM = twips_ToMM(left)
+		}
 		if props.Indent.FirstLine != "" {
 			state.firstLineMM = twips_ToMM(props.Indent.FirstLine)
 			state.hasIndent = true
@@ -491,6 +506,8 @@ func (sheet styleSheet) resolve_Paragraph(paragraph xParagraph, inTable bool) pa
 		LineSpacing: paraState.lineSpacing,
 		FirstLineMM: paraState.firstLineMM,
 		HasIndent:   paraState.hasIndent,
+		LeftMM:      paraState.leftMM,
+		Numbered:    paraState.numbered,
 	}
 	runs := append([]xRun{}, paragraph.Runs...)
 	for _, link := range paragraph.Hyperlinks {

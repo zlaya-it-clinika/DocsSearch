@@ -45,6 +45,8 @@ type draftCheckResponse struct {
 	Recommendations []draftRecommendation `json:"recommendations"`
 	// false - файл не .docx, оформление не проверялось, только текст
 	FormatChecked bool `json:"formatChecked"`
+	// Каких реквизитов нет и кого предложить: вопросы перед исправлением
+	Requisites *draftRequisites `json:"requisites,omitempty"`
 }
 
 // Ответ «Исправить оформление»: исправленный .docx в черновиках, что исправлено и что осталось вручную
@@ -57,11 +59,11 @@ type draftFixResponse struct {
 }
 
 // Исправление оформления .docx. ok false - файл не .docx или не читается
-func fix_DraftFormat(fileName string, body []byte, source draftcheck.Source, format layout.Format) ([]byte, draftFixResponse, bool) {
+func fix_DraftFormat(fileName string, body []byte, source draftcheck.Source, format layout.Format, options formatcheck.FixOptions) ([]byte, draftFixResponse, bool) {
 	if !strings.EqualFold(filepath.Ext(fileName), ".docx") {
 		return nil, draftFixResponse{}, false
 	}
-	result, err := formatcheck.Fix_Docx(body, format)
+	result, err := formatcheck.Fix_Docx(body, format, options)
 	if err != nil {
 		return nil, draftFixResponse{}, false
 	}
@@ -103,7 +105,13 @@ func (api *liveAPI) serve_DraftFix(responseWriter http.ResponseWriter, request *
 		write_LiveError(responseWriter, err)
 		return
 	}
-	fixed, response, ok := fix_DraftFormat(fileName, body, instruction_Source(lines), api.layoutFormat)
+	organization, err := api.store.Read_Organization(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	options := read_FixOptions(request, organization.Officials, api.layoutFormat, api.chatter)
+	fixed, response, ok := fix_DraftFormat(fileName, body, instruction_Source(lines), api.layoutFormat, options)
 	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return
@@ -139,7 +147,7 @@ func (stubStore *stub) serve_DraftFix(responseWriter http.ResponseWriter, reques
 		Title:      texts.SeedInstructionTitle,
 		Edition:    texts.EditionDefault,
 		Scope:      texts.ScopeGlobal,
-	}, stubStore.layoutFormat)
+	}, stubStore.layoutFormat, read_FixOptions(request, stubStore.organization.officials_Snapshot(), stubStore.layoutFormat, nil))
 	if !ok {
 		write_ErrorResponse(responseWriter, http.StatusBadRequest, texts.ErrorInvalidBody)
 		return

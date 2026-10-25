@@ -71,10 +71,29 @@ func TestStubDraftFixFormatting(t *testing.T) {
 	handler := must_Handler(t, config.Config{Mode: config.ModeStub})
 	employeeToken := login(t, handler, texts.SeedEmployeeLogin, texts.SeedEmployeePassword)
 	docx := build_TestDocx(t, `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`+
-		`<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr><w:t>Прошу выделить новый ноутбук. Подпись И.И. Иванов.</w:t></w:r></w:p>`+
+		`<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr><w:t>Прошу выделить новый ноутбук до 01.11.2026.</w:t></w:r></w:p>`+
 		`<w:p><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>[1] заполнить</w:t></w:r></w:p>`+
 		`<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="850" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>`)
-	response := uploadMultipart(t, handler, "/drafts/fix", employeeToken, "external.docx", docx, nil)
+	adminToken := login(t, handler, texts.SeedAdminLogin, texts.SeedAdminPassword)
+	created := doJSON(t, handler, http.MethodPost, "/organization/officials", adminToken, map[string]any{"position": "Генеральный директор", "fullName": "Петров Андрей Борисович", "chief": true})
+	if created.Code != http.StatusOK {
+		t.Fatalf("official %d", created.Code)
+	}
+	official := decodeJSON[struct {
+		OfficialID string `json:"officialId"`
+	}](t, created)
+	// Проверка говорит, каких реквизитов нет, и предлагает должностных лиц
+	checkResponse := uploadMultipart(t, handler, "/drafts/check", employeeToken, "external.docx", docx, nil)
+	var checked0 draftCheckResponse
+	decodeInto(t, checkResponse, &checked0)
+	if checked0.Requisites == nil || strings.Join(checked0.Requisites.Missing, ",") != "addressee,title,signature" ||
+		len(checked0.Requisites.Officials) != 1 || !checked0.Requisites.Officials[0].Chief {
+		t.Fatalf("requisites %+v", checked0.Requisites)
+	}
+	response := uploadMultipart(t, handler, "/drafts/fix", employeeToken, "external.docx", docx, map[string]string{
+		"signerId": official.OfficialID,
+		"title":    "о замене ноутбука",
+	})
 	if response.Code != http.StatusOK {
 		t.Fatalf("fix %d %s", response.Code, response.Body.String())
 	}
@@ -82,6 +101,9 @@ func TestStubDraftFixFormatting(t *testing.T) {
 	decodeInto(t, response, &fixed)
 	if fixed.FileName != "external"+texts.FormatFixFileSuffix || fixed.DraftLink == "" || len(fixed.Applied) < 3 {
 		t.Fatalf("fixed %+v", fixed)
+	}
+	if !strings.Contains(strings.Join(fixed.Applied, ","), texts.FormatFixSignature) || !strings.Contains(strings.Join(fixed.Applied, ","), texts.FormatFixTitle) {
+		t.Fatalf("requisites not added %+v", fixed.Applied)
 	}
 	// Красный текст и номер поля - содержание, они остаются в замечаниях
 	for _, item := range fixed.Recommendations {

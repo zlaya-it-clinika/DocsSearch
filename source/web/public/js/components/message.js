@@ -224,7 +224,7 @@ function render_RecommendationList(recommendations, emptyText) {
 function render_DraftCheckBody(message, handlers) {
 	const recommendations = Array.isArray(message.recommendations) ? message.recommendations : [];
 	// Кнопка - когда есть замечания по оформлению и файл еще в этом окне
-	const canFix = message.formatChecked !== false && message.sourceFile && handlers.onFixFormat && recommendations.some((item) => item.level);
+	const canFix = message.formatChecked !== false && message.sourceFile && handlers.onFixFormat && (recommendations.some((item) => item.level) || message.requisites);
 	return [
 		create_DocCard('file-check', ChatTexts.draftCheckTitle, message.fileName, [
 			render_RecommendationList(recommendations, ChatTexts.draftCheckEmpty),

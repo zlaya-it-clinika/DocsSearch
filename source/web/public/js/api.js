@@ -288,9 +288,15 @@ export function check_Draft(file) {
 
 // Исправление оформления .docx после подтверждения сотрудника: draftLink на исправленный файл,
 // applied - что исправлено, recommendations - что осталось поправить вручную
-export function fix_DraftFormat(file) {
+// fields: signerId, addresseeId - должностные лица из вкладки «Организация», title - о чем документ
+export function fix_DraftFormat(file, fields = {}) {
 	const formData = new FormData();
 	formData.append('file', file);
+	for (const [name, value] of Object.entries(fields)) {
+		if (typeof value === 'string' && value !== '') {
+			formData.append(name, value);
+		}
+	}
 	return request_Api('POST', '/drafts/fix', { formData });
 }
 

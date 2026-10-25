@@ -63,9 +63,15 @@ const goodStyles = `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times
 // A4, поля 30/20/25/15 мм, отдельная первая страница
 const goodSection = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1134" w:bottom="851" w:left="1701"/><w:titlePg/></w:sectPr>`
 
+// Адресат в правой зоне, заголовок, текст, подпись
+var cleanBody = paragraph(`<w:ind w:left="5000" w:firstLine="0"/><w:jc w:val="left"/>`, "Генеральному директору") +
+	paragraph(`<w:ind w:left="5000" w:firstLine="0"/><w:jc w:val="left"/>`, "В. В. Капибарову") +
+	paragraph(`<w:ind w:firstLine="0"/><w:jc w:val="left"/>`, "О замене ноутбука") +
+	paragraph("", bodyText) + paragraph("", "Дата 05.06.2026.") +
+	paragraph(`<w:ind w:firstLine="0"/><w:jc w:val="left"/>`, "Менеджер отдела продаж М. С. Петрова")
+
 func TestCheck_DocxCleanDocument(t *testing.T) {
-	body := paragraph("", "Генеральному директору В. В. Капибарову") + paragraph("", bodyText) + paragraph("", "Дата 05.06.2026, подпись М. С. Петрова")
-	findings, err := Check_Docx(build_Docx(t, body, goodSection, goodStyles, map[string]string{"word/footer1.xml": footer("right")}), must_Format(t))
+	findings, err := Check_Docx(build_Docx(t, cleanBody, goodSection, goodStyles, map[string]string{"word/footer1.xml": footer("right")}), must_Format(t))
 	if err != nil {
 		t.Fatal(err)
 	}

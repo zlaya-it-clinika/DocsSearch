@@ -1485,6 +1485,7 @@ func (stubStore *stub) serve_DraftCheck(responseWriter http.ResponseWriter, requ
 		write_DraftError(responseWriter, err)
 		return
 	}
+	recommendations.Requisites = requisites_ForDraft(fileName, body, stubStore.organization.officials_Snapshot())
 	write_JSONResponse(responseWriter, http.StatusOK, recommendations)
 }
 
@@ -1500,6 +1501,10 @@ func recommendations_ForDraft(fileName string, body []byte, source draftcheck.So
 	// Сначала оформление файла по правилам Инструкции и ГОСТ, затем рекомендации по тексту
 	recommendations, formatChecked := format_Recommendations(fileName, body, source, format)
 	for _, item := range items {
+		// У .docx подпись ищет проверка оформления по ФИО в конце документа, поиск слова «подпись» в тексте не нужен
+		if formatChecked && item.Text == texts.DraftSignatureMissing {
+			continue
+		}
 		link := ""
 		if item.DocumentID != "" && item.Paragraph != "" {
 			link = build_OriginalFileLink(item.DocumentID, item.Paragraph)

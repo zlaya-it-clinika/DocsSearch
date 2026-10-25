@@ -49,6 +49,14 @@ const (
 	FormatPageRunes = 2500
 )
 
+// Реквизиты: нет заголовка или подписи
+const (
+	FormatTitleMissing     = "Нет заголовка к тексту: кратко, о чем документ, с предлогом «О» или «Об»"
+	FormatSignatureMissing = "Нет подписи: должность и инициалы с фамилией того, кто подписывает документ"
+	FormatTitleProfile     = "ГОСТ Р 7.0.97-2025"
+	FormatTitleRef         = "п. 5.17: заголовок к тексту отвечает на вопрос «о чем?»"
+)
+
 const (
 	// По этому слову в названии профиля замечание связывается с файлом Инструкции в базе знаний
 	FormatInstructionMark = "инструкц"
@@ -56,17 +64,21 @@ const (
 
 // Что исправлено в оформлении после подтверждения сотрудника
 const (
-	FormatFixPage       = "Формат листа приведен к A4"
-	FormatFixMargins    = "Поля приведены к правилам"
-	FormatFixFirstPage  = "Номер страницы убран с первой страницы"
-	FormatFixFont       = "Шрифт заменен на Times New Roman"
-	FormatFixSize       = "Размер шрифта основного текста приведен к правилам"
-	FormatFixSpacing    = "Межстрочный интервал основного текста приведен к правилам"
-	FormatFixAlign      = "Основной текст выровнен по ширине"
-	FormatFixIndent     = "Абзацный отступ приведен к 1,25 см"
-	FormatFixPageNumber = "Номер страницы выровнен по правилам"
-	FormatFixDates      = "Даты записаны в формате ДД.ММ.ГГГГ"
-	FormatFixInitials   = "Инициалы записаны по правилам"
+	FormatFixPage            = "Формат листа приведен к A4"
+	FormatFixMargins         = "Поля приведены к правилам"
+	FormatFixFirstPage       = "Номер страницы убран с первой страницы"
+	FormatFixFont            = "Шрифт заменен на Times New Roman"
+	FormatFixSize            = "Размер шрифта основного текста приведен к правилам"
+	FormatFixSpacing         = "Межстрочный интервал основного текста приведен к правилам"
+	FormatFixAlign           = "Основной текст выровнен по ширине"
+	FormatFixIndent          = "Абзацный отступ приведен к 1,25 см"
+	FormatFixPageNumber      = "Номер страницы выровнен по правилам"
+	FormatFixDates           = "Даты записаны в формате ДД.ММ.ГГГГ"
+	FormatFixInitials        = "Инициалы записаны по правилам"
+	FormatFixAddressee       = "Добавлен адресат"
+	FormatFixTitle           = "Добавлен заголовок к тексту"
+	FormatFixSignature       = "Добавлена подпись"
+	FormatFixPageNumberAdded = "Добавлен номер страницы"
 	// Имя исправленного файла: имя исходного и эта приписка
 	FormatFixFileSuffix = " - оформление исправлено.docx"
 )

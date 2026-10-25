@@ -1187,6 +1187,12 @@ func (api *liveAPI) serve_DraftCheck(responseWriter http.ResponseWriter, request
 		write_DraftError(responseWriter, err)
 		return
 	}
+	organization, err := api.store.Read_Organization(request.Context(), token)
+	if err != nil {
+		write_LiveError(responseWriter, err)
+		return
+	}
+	recommendations.Requisites = requisites_ForDraft(fileName, body, organization.Officials)
 	write_JSONResponse(responseWriter, http.StatusOK, recommendations)
 }
 
